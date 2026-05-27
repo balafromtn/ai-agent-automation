@@ -1,5 +1,6 @@
 "use client";
 
+import { validateGraphIntegrity } from "@/utils/graphValidation";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -508,6 +509,19 @@ export default function WorkflowBuilderPage() {
         };
       });
 
+      // 🛡️ Final Graph Integrity Validation Check
+      const validation = validateGraphIntegrity(backendSteps, edges);
+      if (!validation.isValid) {
+        console.error("Save workflow blocked due to validation errors:", validation.errors);
+        addToast({
+          type: "error",
+          title: "Failed to Save Workflow",
+          description: validation.errors[0] || "Your workflow contains orphaned edges or invalid connections. Please resolve them before saving.",
+        });
+        return; // Halt execution entirely
+      }
+
+      // 🚀 Topology is verified clean - proceed with secure API request
       const res = await fetch(apiUrl(`/workflows/${id}/steps`), {
         method: "PUT",
         headers: {

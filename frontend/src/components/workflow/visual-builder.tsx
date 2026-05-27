@@ -264,28 +264,42 @@ export default function VisualBuilder({
   /* ---------- KEYBOARD SHORTCUT DUPLICATION SAFETY ---------- */
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Catch Ctrl+D or Cmd+D
       if ((e.metaKey || e.ctrlKey) && e.key === "d") {
         const activeSelectedNodes = nodes.filter((n) => n.selected);
         if (!activeSelectedNodes.length) return;
         
         e.preventDefault();
         
-        // Match targeted engine items with current selection
         const stepsToDuplicate = steps.filter((s) => 
           activeSelectedNodes.some((node) => node.id === s.id)
         );
 
-        // Run deep clone & fresh ID sanitization layering
-        const clonedSteps = duplicateNodesSafely(stepsToDuplicate);
+        // Run safe cloning engine to grab brand new IDs and the mapping translation lookup
+        const { clonedSteps, idMap } = duplicateNodesSafely(stepsToDuplicate);
+
+        // OPTIONAL ENHANCEMENT: Extract and replicate edges that connect the highlighted elements
+        const internalEdgesToDuplicate = flowEdges.filter((edge) => 
+          activeSelectedNodes.some((n) => n.id === edge.source) &&
+          activeSelectedNodes.some((n) => n.id === edge.target)
+        );
+
+        const clonedEdges = internalEdgesToDuplicate.map((edge) => ({
+          ...edge,
+          id: generateEdgeId(),
+          source: idMap.get(edge.source) || edge.source,
+          target: idMap.get(edge.target) || edge.target,
+        }));
 
         setSteps((prev) => [...prev, ...clonedSteps]);
+        if (clonedEdges.length > 0) {
+          setFlowEdges((prev) => [...prev, ...clonedEdges]);
+        }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [nodes, steps, setSteps]);
+  }, [nodes, steps, flowEdges, setSteps]);
 
   /* ---------- EVENTS ---------- */
 
@@ -445,7 +459,7 @@ export default function VisualBuilder({
                           <span>{row.name}</span>
                           <span className="text-muted-foreground">
                             {row.type}
-幕                          </span>
+幕                        </span>
                         </div>
                       ))}
                     </div>
