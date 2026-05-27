@@ -459,7 +459,7 @@ export default function VisualBuilder({
                           <span>{row.name}</span>
                           <span className="text-muted-foreground">
                             {row.type}
-幕                        </span>
+                        </span>
                         </div>
                       ))}
                     </div>
