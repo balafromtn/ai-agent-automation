@@ -3,6 +3,9 @@ const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const { runLLM } = require("./llmAdapter");
+const { runGitHub } = require("../integrations/github");
+const { runSlack } = require("../integrations/slack");
+const { runDiscord } = require("../integrations/discord");
 require("dotenv").config();
 
 
