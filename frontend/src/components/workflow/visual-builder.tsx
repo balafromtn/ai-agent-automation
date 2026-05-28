@@ -23,7 +23,11 @@ type StepType =
   | "Tool"
   | "Document"
   | "Condition"
-  | "Switch";
+  | "Switch"
+  | "GitHub"
+  | "Slack"
+  | "Discord";
+  
 
 type StepNode = {
   id: string;
@@ -703,6 +707,9 @@ export default function VisualBuilder({
                 <option value="Document">Document</option>
                 <option value="Condition">Condition</option>
                 <option value="Switch">Switch</option>
+                <option value="GitHub">GitHub</option>
+                <option value="Slack">Slack</option>
+                <option value="Discord">Discord</option>
               </select>
             </div>
 
@@ -1067,6 +1074,107 @@ export default function VisualBuilder({
                   />
                 </div>
               </>
+            )}
+
+                {/* GitHub */}
+            {selectedStep.type === "GitHub" && (
+              <>
+                <div>
+                  <label className="text-xs text-muted-foreground">Action</label>
+                  <select
+                    className="w-full border rounded-lg px-3 py-2 mt-1 bg-background"
+                    value={selectedStep.action || ""}
+                    onChange={(e) => {
+                      updateStep(selectedStep.id, { action: e.target.value });
+                    }}
+                  >
+                    <option value="" disabled>Select action</option>
+                    <option value="create_issue">Create Issue</option>
+                    <option value="get_issue">Get Issue</option>
+                    <option value="comment_issue">Comment Issue</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Owner</label>
+                  <input
+                    className="w-full border rounded-lg px-3 py-2 mt-1 bg-background"
+                    value={selectedStep.owner || ""}
+                    onChange={(e) => updateStep(selectedStep.id, {owner: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Repo</label>
+                  <input
+                    className="w-full border rounded-lg px-3 py-2 mt-1 bg-background"
+                    value={selectedStep.repo || ""}
+                    onChange={(e) => updateStep(selectedStep.id, {repo: e.target.value})}
+                  />
+                </div>
+                {selectedStep.action === "create_issue" && (
+                  <>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Title</label>
+                      <input
+                        className="w-full border rounded-lg px-3 py-2 mt-1 bg-background"
+                        value={selectedStep.title || ""}
+                        onChange={(e) => updateStep(selectedStep.id, {title: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">Body</label>
+                      <textarea
+                        className="w-full border rounded-lg px-3 py-2 mt-1 bg-background"
+                        value={selectedStep.body || ""}
+                        onChange={(e) => updateStep(selectedStep.id, {body: e.target.value})}
+                      />
+                    </div>
+                  </>
+                )}
+                {(selectedStep.action === "get_issue" || selectedStep.action === "comment_issue") && (
+                  <div>
+                    <label className="text-xs text-muted-foreground">Issue Number</label>
+                    <input
+                      className="w-full border rounded-lg px-3 py-2 mt-1 bg-background"
+                      value={selectedStep.issue_number || ""}
+                      onChange={(e) => updateStep(selectedStep.id, {issue_number: e.target.value})}
+                    />
+                  </div>
+                )}
+                {selectedStep.action === "comment_issue" && (
+                  <div>
+                    <label className="text-xs text-muted-foreground">Comment</label>
+                    <textarea
+                      className="w-full border rounded-lg px-3 py-2 mt-1 bg-background"
+                      value={selectedStep.comment || ""}
+                      onChange={(e) => updateStep(selectedStep.id, {comment: e.target.value})}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Slack */}
+            {selectedStep.type === "Slack" && (
+              <div>
+                <label className="text-xs text-muted-foreground">Message</label>
+                <textarea
+                  className="w-full border rounded-lg px-3 py-2 mt-1 bg-background"
+                  value={selectedStep.text || ""}
+                  onChange={(e) => updateStep(selectedStep.id, {text: e.target.value})}
+                />
+              </div>
+            )}
+
+            {/* Discord */}
+            {selectedStep.type === "Discord" && (
+              <div>
+                <label className="text-xs text-muted-foreground">Message</label>
+                <textarea
+                  className="w-full border rounded-lg px-3 py-2 mt-1 bg-background"
+                  value={selectedStep.content || ""}
+                  onChange={(e) => updateStep(selectedStep.id, {content: e.target.value})}
+                />
+              </div>
             )}
 
             {/* CONDITION */}

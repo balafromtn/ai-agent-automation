@@ -22,11 +22,15 @@ async function runGitHub(step, context, interpolate) {
         const title = interpolate(step.title || "", context);
         const body = interpolate(step.body || "", context);
 
+        if (!owner || !repo || !title) throw new Error("create_issue requires owner, repo, and title");
+
         const res = await axios.post(
         `https://api.github.com/repos/${owner}/${repo}/issues`,
         {title, body},
         {headers}
-        );
+        ).catch(err => {
+            throw new Error(err.response?.data?.message || err.message);
+        });
 
         return {
         issueNumber: res.data.number,
@@ -41,10 +45,14 @@ async function runGitHub(step, context, interpolate) {
         const repo = interpolate(step.repo || "", context);
         const number = interpolate(String(step.issue_number || ""), context);
 
+        if (!owner || !repo || !number) throw new Error("get_issue requires owner, repo, and issue_number");
+
         const res = await axios.get(
         `https://api.github.com/repos/${owner}/${repo}/issues/${number}`,
         {headers}
-        );
+        ).catch(err => {
+            throw new Error(err.response?.data?.message || err.message);
+        });
 
         return {
         issueNumber: res.data.number,
@@ -62,12 +70,16 @@ async function runGitHub(step, context, interpolate) {
         const number = interpolate(String(step.issue_number || ""), context);
         const comment = interpolate(step.comment || "", context);
 
+        if (!owner || !repo || !number || !comment) throw new Error("comment_issue requires owner, repo, issue_number, and comment");
+
         const res = await axios.post(
         `https://api.github.com/repos/${owner}/${repo}/issues/${number}/comments`,
         
         { body: comment },
         {headers}
-        );
+        ).catch(err => {
+            throw new Error(err.response?.data?.message || err.message);
+        });
 
         return {
         commentId: res.data.id,
