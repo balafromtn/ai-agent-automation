@@ -16,6 +16,7 @@ import { generateNodeId, generateEdgeId } from "@/utils/ids";
 import { duplicateNodesSafely } from "@/utils/graphValidation";
 import { Edge, applyNodeChanges, applyEdgeChanges } from "reactflow";
 import { X } from "lucide-react";
+import { usePerformanceMonitor } from "@/hooks/usePerformanceMonitor";
 
 type StepType =
   | "LLM"
@@ -224,6 +225,7 @@ export default function VisualBuilder({
   edges: any[];
   onEdgesChange: (edges: any[]) => void;
 }) {
+  usePerformanceMonitor("VisualBuilder");
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [documents, setDocuments] = useState<any[]>([]);
   const [flowEdges, setFlowEdges] = useState<CustomEdge[]>(() => edges || []);
@@ -307,51 +309,55 @@ export default function VisualBuilder({
 
   /* ---------- EVENTS ---------- */
 
-  function onNodeClick(_: any, node: Node) {
+  const onNodeClick = useCallback((_: any, node: Node) => {
     setSelectedNode(node);
-  }
+  }, []);
 
-  function handleEdgesDelete(deletedEdges: any[]) {
+  const handleEdgesDelete = useCallback((deletedEdges: any[]) => {
     setFlowEdges((eds) =>
       eds.filter((edge) => !deletedEdges.some((d) => d.id === edge.id)),
     );
-  }
+  }, []);
 
-  const onNodesChange = (changes: any) => {
+  const onNodesChange = useCallback((changes: any) => {
     setNodes((nds) => {
       const updated = applyNodeChanges(changes, nds);
 
       setTimeout(() => {
-        setSteps((prev) =>
-          prev.map((step) => {
+        setSteps((prev) => {
+          let isChanged = false;
+          const next = prev.map((step) => {
             const node = updated.find((n) => n.id === step.id);
-            if (!node) return step;
+            if (!node || !node.position) return step;
 
-            return {
-              ...step,
-              position: node.position,
-            };
-          }),
-        );
+            if (
+              node.position.x !== step.position?.x ||
+              node.position.y !== step.position?.y
+            ) {
+              isChanged = true;
+              return { ...step, position: node.position };
+            }
+            return step;
+          });
+          return isChanged ? next : prev;
+        });
       }, 0);
 
       return updated;
     });
-  };
+  }, [setNodes, setSteps]);
 
-  const handleEdgesChange = (changes: any) => {
+  const handleEdgesChange = useCallback((changes: any) => {
     const hasStructuralChange = changes.some(
       (c: any) => c.type !== "select" && c.type !== "reset",
     );
 
     if (!hasStructuralChange) return;
 
-    setFlowEdges((eds) => {
-      return applyEdgeChanges(changes, eds);
-    });
-  };
+    setFlowEdges((eds) => applyEdgeChanges(changes, eds));
+  }, []);
 
-  const onConnect = (params: Connection) => {
+  const onConnect = useCallback((params: Connection) => {
     const sourceStep = steps.find((s) => s.id === params.source);
 
     const isCondition = sourceStep?.type === "Condition";
@@ -414,15 +420,15 @@ export default function VisualBuilder({
 
       return addEdge(newEdge, filtered);
     });
-  };
+  }, [steps, flowEdges]);
 
-  function updateStep(stepId: string, patch: any) {
+  const updateStep = useCallback((stepId: string, patch: any) => {
     setSteps((prev) =>
       prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)),
     );
-  }
+  }, [setSteps]);
 
-  function updateNodeLabel(stepId: string, name: string, type: string) {
+  const updateNodeLabel = useCallback((stepId: string, name: string, type: string) => {
     const step = steps.find((s) => s.id === stepId);
     if (!step) return;
 
@@ -474,7 +480,7 @@ export default function VisualBuilder({
           : n,
       ),
     );
-  }
+  }, [steps, flowEdges, deleteNode, setNodes]);
 
   useEffect(() => {
     async function fetchDocuments() {
@@ -496,8 +502,9 @@ export default function VisualBuilder({
   }, []);
 
   useEffect(() => {
-    setNodes((nds) =>
-      nds.map((node) => {
+    setNodes((nds) => {
+      let changed = false;
+      const next = nds.map((node) => {
         const step = steps.find((s) => s.id === node.id);
         if (!step) return node;
 
@@ -517,6 +524,7 @@ export default function VisualBuilder({
           return node;
         }
 
+        changed = true;
         return {
           ...node,
           style: {
@@ -525,14 +533,16 @@ export default function VisualBuilder({
             boxShadow,
           },
         };
-      }),
-    );
-  }, [selectedNode, steps]);
+      });
+      
+      return changed ? next : nds;
+    });
+  }, [selectedNode, steps, setNodes]);
 
   /* ---------- ADD NODE ---------- */
 
-  function addNode() {
-    const id = generateNodeId("LLM"); // ✅ Alphabet-safe prefix token
+  const addNode = useCallback(() => {
+    const id = generateNodeId("LLM");
 
     const node: StepNode = {
       id,
@@ -574,8 +584,8 @@ export default function VisualBuilder({
     };
 
     setNodes((n) => [...n, node]);
-    setSteps([
-      ...steps,
+    setSteps((prev) => [
+      ...prev,
       {
         id,
         name: "New Step",
@@ -583,7 +593,7 @@ export default function VisualBuilder({
         prompt: "",
       },
     ]);
-  }
+  }, [deleteNode, setNodes, setSteps]);
 
   return (
     <div className="h-[720px] rounded-xl border bg-gradient-to-b from-background to-muted/40 relative overflow-hidden">
@@ -630,7 +640,6 @@ export default function VisualBuilder({
         <Background gap={24} size={1} />
       </ReactFlow>
 
-      {/* Settings Configuration Side panel rendering remains active below */}
       {selectedNode && selectedStep && (
         <div className="absolute right-0 top-0 h-full w-[380px] bg-card border-l shadow-xl z-30 flex flex-col">
           <div className="p-4 border-b flex items-start justify-between">

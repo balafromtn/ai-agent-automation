@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -74,9 +74,10 @@ function DashboardPageInner() {
     useApi<DashboardStats>("/dashboard/stats");
 
   const { data: tasks, loading: tasksLoading } =
-  useApi<Task[]>("/tasks");
+    useApi<Task[]>("/tasks");
 
-  const recentTasks = tasks?.slice(0, 8) ?? [];
+  const recentTasks = useMemo(() => tasks?.slice(0, 8) ?? [], [tasks]);
+
   console.log("statsLoading: ", statsLoading);
   console.log("stats: ", stats);
   console.log("tasksData: ", recentTasks);
@@ -98,12 +99,12 @@ function DashboardPageInner() {
     });
 
     return () => clearContext();
-  }, [stats, recentTasks.length, statsLoading]);
+  }, [stats, recentTasks, statsLoading, setContext, clearContext]);
 
   /* -----------------------------
      Helpers
   ------------------------------ */
-  function timeAgo(dateString: string) {
+  const timeAgo = useCallback((dateString: string) => {
     const diff = now - new Date(dateString).getTime();
     const minutes = Math.floor(diff / 60000);
 
@@ -115,9 +116,9 @@ function DashboardPageInner() {
 
     const days = Math.floor(hours / 24);
     return `${days} day${days > 1 ? "s" : ""} ago`;
-  }
+  }, [now]);
 
-  function getStatusColor(status: Task["status"]) {
+  const getStatusColor = useCallback((status: Task["status"]) => {
     switch (status) {
       case "completed":
         return "bg-success/20 text-success border-success/30";
@@ -128,15 +129,15 @@ function DashboardPageInner() {
       default:
         return "bg-muted text-muted-foreground";
     }
-  }
+  }, []);
 
-  const statsUI = [
+  const statsUI = useMemo(() => [
     { label: "Total Workflows", value: stats?.workflows ?? 0, icon: Workflow },
     { label: "Total Tasks", value: stats?.tasks ?? 0, icon: ListChecks },
     { label: "Running Tasks", value: stats?.runningTasks ?? 0, icon: Activity },
     { label: "Active Agents", value: stats?.agents ?? 0, icon: Bot },
     { label: "Schedules", value: stats?.schedules ?? 0, icon: Calendar },
-  ];
+  ], [stats]);
 
   /* -----------------------------
      UI
