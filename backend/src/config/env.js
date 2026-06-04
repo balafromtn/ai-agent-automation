@@ -110,6 +110,25 @@ const envSchema = z.object({
     .int()
     .positive("RATE_LIMIT_WEBHOOK_MAX must be a positive number")
     .optional(),
+
+  // tool sandbox isolation options
+  TOOL_SANDBOX_UID: z.coerce
+    .number()
+    .int()
+    .positive("TOOL_SANDBOX_UID must be a positive number")
+    .optional(),
+
+  TOOL_SANDBOX_GID: z.coerce
+    .number()
+    .int()
+    .positive("TOOL_SANDBOX_GID must be a positive number")
+    .optional(),
+
+  TOOL_EXECUTION_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .positive("TOOL_EXECUTION_TIMEOUT_MS must be a positive number")
+    .optional(),
 });
 
 function validateEnv() {

@@ -215,156 +215,134 @@ Do not say you lack memory.`;
         ? interpolate(step.path, context)
         : `runtime/stepName_${step.name}_TaskId_${context.taskId}.txt`;
 
-      const outPath = path.resolve(process.cwd(), resolvedPath);
-      const dir = path.dirname(outPath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
       const content = interpolate(step.content || "", context);
+      const { runToolInSandbox } = require("../tools/registry");
 
-      // WRITE
-      if (action === "write") {
-        fs.writeFileSync(outPath, content, "utf8");
-
-        return {
-          stepId: step.stepId,
-          type: "file",
-          tool: "file",
-          input: { action, path: outPath, content },
-          output: { path: outPath },
-          success: true,
-          timestamp: new Date(),
-        };
-      }
-
-      // APPEND
-      if (action === "append") {
-        fs.appendFileSync(outPath, content + "\n", "utf8");
-
-        return {
-          stepId: step.stepId,
-          type: "file",
-          tool: "file",
-          input: { action, path: outPath, content },
-          output: { path: outPath },
-          success: true,
-          timestamp: new Date(),
-        };
-      }
-
-      // READ
-      if (action === "read") {
-        if (!fs.existsSync(outPath)) {
+      try {
+        if (action === "write") {
+          const res = await runToolInSandbox("fileTool", "write", [resolvedPath, content]);
           return {
             stepId: step.stepId,
             type: "file",
             tool: "file",
-            input: { action, path: outPath },
-            output: "File not found",
-            success: false,
+            input: { action, path: resolvedPath, content },
+            output: { path: res.path },
+            success: true,
             timestamp: new Date(),
           };
         }
 
-        const contents = fs.readFileSync(outPath, "utf8");
+        if (action === "append") {
+          const res = await runToolInSandbox("fileTool", "append", [resolvedPath, content]);
+          return {
+            stepId: step.stepId,
+            type: "file",
+            tool: "file",
+            input: { action, path: resolvedPath, content },
+            output: { path: res.path },
+            success: true,
+            timestamp: new Date(),
+          };
+        }
+
+        if (action === "read") {
+          const res = await runToolInSandbox("fileTool", "read", [resolvedPath]);
+          return {
+            stepId: step.stepId,
+            type: "file",
+            tool: "file",
+            input: { action, path: resolvedPath },
+            output: res,
+            success: true,
+            timestamp: new Date(),
+          };
+        }
 
         return {
           stepId: step.stepId,
           type: "file",
           tool: "file",
-          input: { action, path: outPath },
-          output: contents,
-          success: true,
+          input: { action },
+          output: `Unknown file action: ${action}`,
+          success: false,
+          timestamp: new Date(),
+        };
+      } catch (err) {
+        return {
+          stepId: step.stepId,
+          type: "file",
+          tool: "file",
+          input: { action, path: resolvedPath },
+          output: err.message,
+          success: false,
           timestamp: new Date(),
         };
       }
-
-      return {
-        stepId: step.stepId,
-        type: "file",
-        tool: "file",
-        input: { action },
-        output: `Unknown file action: ${action}`,
-        success: false,
-        timestamp: new Date(),
-      };
     }
 
     // ----- BROWSER -----
     if (step.type === "browser") {
-      const puppeteer = require("puppeteer");
       const action = (step.action || "screenshot").toLowerCase();
       const url = interpolate(step.url || "", context);
+      const { runToolInSandbox } = require("../tools/registry");
 
-      const browser = await puppeteer.launch({
-        headless: process.env.PUPPETEER_HEADLESS !== "false",
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
-      });
+      try {
+        if (action === "screenshot") {
+          const outPath = path.join(
+            "runtime",
+            `screenshot_${context.taskId}_${Date.now()}.png`
+          );
 
-      const page = await browser.newPage();
-      await page.setViewport({ width: 1280, height: 800 });
-      await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
+          const res = await runToolInSandbox("browserTool", "screenshot", [url, { path: outPath }]);
 
-      if (action === "screenshot") {
-        const runtimeDir = path.resolve(process.cwd(), "runtime");
-        if (!fs.existsSync(runtimeDir))
-          fs.mkdirSync(runtimeDir, { recursive: true });
+          return {
+            stepId: step.stepId,
+            type: "browser",
+            tool: "browser",
+            input: { action, url },
+            output: { path: res.path },
+            success: true,
+            timestamp: new Date(),
+          };
+        }
 
-        const outPath = path.join(
-          runtimeDir,
-          `screenshot_${context.taskId}_${Date.now()}.png`
-        );
+        if (action === "evaluate") {
+          const userCode = step.code || "return document.title;";
 
-        await page.screenshot({ path: outPath, fullPage: true });
-        await browser.close();
+          const res = await runToolInSandbox("browserTool", "evaluate", [url, userCode]);
+          const result = res.result;
 
+          return {
+            stepId: step.stepId,
+            type: "browser",
+            tool: "browser",
+            input: { action, url, code: userCode },
+            output: result,
+            success: !result?.error,
+            timestamp: new Date(),
+          };
+        }
+
+        return {
+          stepId: step.stepId,
+          type: "browser",
+          tool: "browser",
+          input: { action },
+          output: `Unknown browser action: ${action}`,
+          success: false,
+          timestamp: new Date(),
+        };
+      } catch (err) {
         return {
           stepId: step.stepId,
           type: "browser",
           tool: "browser",
           input: { action, url },
-          output: { path: outPath },
-          success: true,
+          output: err.message,
+          success: false,
           timestamp: new Date(),
         };
       }
-
-      if (action === "evaluate") {
-        const userCode = step.code || "return document.title;";
-
-        const result = await page.evaluate((code) => {
-          try {
-            // Wrap inside function so "return" works
-            const fn = new Function(code);
-            return fn();
-          } catch (e) {
-            return { error: e.message };
-          }
-        }, userCode);
-
-        await browser.close();
-
-        return {
-          stepId: step.stepId,
-          type: "browser",
-          tool: "browser",
-          input: { action, url, code: userCode },
-          output: result,
-          success: !result?.error,
-          timestamp: new Date(),
-        };
-      }
-
-      await browser.close();
-
-      return {
-        stepId: step.stepId,
-        type: "browser",
-        tool: "browser",
-        input: { action },
-        output: `Unknown browser action: ${action}`,
-        success: false,
-        timestamp: new Date(),
-      };
     }
 
     // ----- DOCUMENT QUERY -----
