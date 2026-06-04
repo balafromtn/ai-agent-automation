@@ -25,8 +25,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Plus, MoreVertical, Bot, ChevronDown } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { Plus, MoreVertical, Bot, ChevronDown, Pencil } from "lucide-react";import { useToast } from "@/hooks/use-toast";
 import { apiUrl } from "@/lib/api";
 
 type Agent = {
@@ -62,6 +61,119 @@ function getStatusColor(status: string) {
     default:
       return "bg-muted text-muted-foreground";
   }
+}
+
+function WorkflowCard({ workflow, onUpdate, getAgentName, getStatusColor, handleDeleteWorkflow }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(workflow.name);
+  const [isSaving, setIsSaving] = useState(false);
+  const { addToast } = useToast();
+
+  const handleSave = async () => {
+    if (editName.trim() === "") {
+      setEditName(workflow.name);
+      setIsEditing(false);
+      return;
+    }
+    if (editName === workflow.name) {
+      setIsEditing(false);
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const res = await fetch(apiUrl(`/workflows/${workflow._id}`), {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + (localStorage.getItem("token") ?? ""),
+        },
+        body: JSON.stringify({ name: editName }),
+      });
+      if (!res.ok) throw new Error("Update failed");
+      onUpdate();
+      addToast({ type: "success", title: "Workflow renamed" });
+    } catch (err) {
+      console.error(err);
+      setEditName(workflow.name);
+      addToast({ type: "error", title: "Failed to rename workflow" });
+    } finally {
+      setIsSaving(false);
+      setIsEditing(false);
+    }
+  };
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-start justify-between">
+        <div className="flex-1">
+          {isEditing ? (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                onBlur={handleSave}
+                onKeyDown={(e) => e.key === "Enter" && handleSave()}
+                autoFocus
+                disabled={isSaving}
+                className="text-lg font-semibold bg-background border border-input rounded px-2 py-1 flex-1"
+              />
+              {isSaving && <span className="text-sm text-muted-foreground">Saving...</span>}
+            </div>
+          ) : (
+            <div className="group flex items-center gap-2">
+              <Link
+                href={`/workflows/${workflow._id}`}
+                className="text-lg font-semibold hover:text-primary"
+              >
+                {workflow.name}
+              </Link>
+              <button
+                onClick={() => {
+                  setIsEditing(true);
+                  setEditName(workflow.name);
+                }}
+                className="opacity-0 group-hover:opacity-100 transition-opacity"
+                aria-label="Edit name"
+              >
+                <Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" />
+              </button>
+            </div>
+          )}
+          {workflow.description && (
+            <p className="mt-2 text-sm text-muted-foreground">{workflow.description}</p>
+          )}
+        </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <Link href={`/workflows/${workflow._id}/builder`}>
+              <DropdownMenuItem>Edit Workflow Details</DropdownMenuItem>
+            </Link>
+            <DropdownMenuItem
+              className="text-destructive"
+              onClick={() => handleDeleteWorkflow(workflow._id)}
+            >
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between">
+        <Badge className={getStatusColor(workflow.status)}>{workflow.status}</Badge>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Bot className="size-4" />
+          <span>{getAgentName(workflow.agentId)}</span>
+        </div>
+      </div>
+    </Card>
+  );
 }
 
 export default function WorkflowsPage() {
@@ -223,73 +335,16 @@ export default function WorkflowsPage() {
               <p className="opacity-70">Loading workflows...</p>
             ) : (
               <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-                {workflows.map((workflow) => (
-                  <Card key={workflow._id} className="p-6">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <Link
-                          href={`/workflows/${workflow._id}`}
-                          className="text-lg font-semibold hover:text-primary"
-                        >
-                          {workflow.name}
-                        </Link>
-
-                        {workflow.description && (
-                          <p className="mt-2 text-sm text-muted-foreground">
-                            {workflow.description}
-                          </p>
-                        )}
-                      </div>
-
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                          >
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-
-                        <DropdownMenuContent align="end">
-                          <Link href={`/workflows/${workflow._id}/builder`}>
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setEditingWorkflow(workflow);
-                              }}
-                            >
-                              Edit Workflow Details
-                            </DropdownMenuItem>
-                          </Link>
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              handleDeleteWorkflow(workflow._id);
-                            }}
-                          >
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-
-                    <div className="mt-4 flex items-center justify-between">
-                      <Badge className={getStatusColor(workflow.status)}>
-                        {workflow.status}
-                      </Badge>
-
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Bot className="size-4" />
-                        <span>{getAgentName(workflow.agentId)}</span>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
+               {workflows.map((workflow) => (
+  <WorkflowCard
+    key={workflow._id}
+    workflow={workflow}
+    onUpdate={fetchWorkflows}
+    getAgentName={getAgentName}
+    getStatusColor={getStatusColor}
+    handleDeleteWorkflow={handleDeleteWorkflow}
+  />
+))}
               </div>
             )}
           </div>
