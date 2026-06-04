@@ -10,7 +10,7 @@ import ReactFlow, {
   Node,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiUrl } from "@/lib/api";
 import { generateNodeId, generateEdgeId } from "@/utils/ids";
 import { duplicateNodesSafely } from "@/utils/graphValidation";
@@ -219,14 +219,18 @@ export default function VisualBuilder({
   setSteps,
   edges,
   onEdgesChange,
+  onSave,
 }: {
   steps: any[];
   setSteps: React.Dispatch<React.SetStateAction<any[]>>;
   edges: any[];
   onEdgesChange: (edges: any[]) => void;
+  onSave?: () => void;
 }) {
   usePerformanceMonitor("VisualBuilder");
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const historyRef = useRef<{ steps: any[]; edges: CustomEdge[] }[]>([]);
+  const futureRef = useRef<{ steps: any[]; edges: CustomEdge[] }[]>([]);
   const [documents, setDocuments] = useState<any[]>([]);
   const [flowEdges, setFlowEdges] = useState<CustomEdge[]>(() => edges || []);
   const selectedStep = steps.find((s) => s.id === selectedNode?.id);
@@ -237,12 +241,14 @@ export default function VisualBuilder({
 
   const deleteNode = useCallback(
     (nodeId: string) => {
+      setSteps((prev) => {
+        historyRef.current.push({ steps: [...prev], edges: [...flowEdges] });
+        futureRef.current = [];
+        return prev.filter((s) => s.id !== nodeId);
+      });
       setFlowEdges((eds) =>
         eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId),
       );
-
-      setSteps((prev) => prev.filter((s) => s.id !== nodeId));
-
       setSelectedNode((prev) => (prev?.id === nodeId ? null : prev));
     },
     [setSteps],
@@ -296,6 +302,8 @@ export default function VisualBuilder({
           target: idMap.get(edge.target) || edge.target,
         }));
 
+        historyRef.current.push({ steps: [...steps], edges: [...flowEdges] });
+        futureRef.current = [];
         setSteps((prev) => [...prev, ...clonedSteps]);
         if (clonedEdges.length > 0) {
           setFlowEdges((prev) => [...prev, ...clonedEdges]);
@@ -307,6 +315,63 @@ export default function VisualBuilder({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [nodes, steps, flowEdges, setSteps]);
 
+  /* ---------- KEYBOARD SHORTCUTS: Save / Delete / Undo / Redo ---------- */
+  useEffect(() => {
+    const isInputFocused = () => {
+      const el = document.activeElement;
+      if (!el) return false;
+      const tag = (el as HTMLElement).tagName.toLowerCase();
+      return (
+        tag === "input" ||
+        tag === "textarea" ||
+        (el as HTMLElement).isContentEditable
+      );
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isInputFocused()) return;
+
+      const isMod = e.metaKey || e.ctrlKey;
+
+      if (isMod && e.key === "s") {
+        e.preventDefault();
+        onSave?.();
+        return;
+      }
+
+      if (isMod && !e.shiftKey && e.key === "z") {
+        e.preventDefault();
+        if (historyRef.current.length === 0) return;
+        const snapshot = historyRef.current.pop()!;
+        futureRef.current.push({ steps, edges: flowEdges });
+        setSteps(snapshot.steps);
+        setFlowEdges(snapshot.edges);
+        setSelectedNode(null);
+        return;
+      }
+
+      if (isMod && e.shiftKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (futureRef.current.length === 0) return;
+        const snapshot = futureRef.current.pop()!;
+        historyRef.current.push({ steps, edges: flowEdges });
+        setSteps(snapshot.steps);
+        setFlowEdges(snapshot.edges);
+        setSelectedNode(null);
+        return;
+      }
+
+      if (e.key === "Delete" && selectedNode) {
+        e.preventDefault();
+        deleteNode(selectedNode.id);
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onSave, selectedNode, steps, flowEdges, deleteNode, setSteps]);
+
   /* ---------- EVENTS ---------- */
 
   const onNodeClick = useCallback((_: any, node: Node) => {
@@ -314,10 +379,12 @@ export default function VisualBuilder({
   }, []);
 
   const handleEdgesDelete = useCallback((deletedEdges: any[]) => {
+    historyRef.current.push({ steps: [...steps], edges: [...flowEdges] });
+    futureRef.current = [];
     setFlowEdges((eds) =>
       eds.filter((edge) => !deletedEdges.some((d) => d.id === edge.id)),
     );
-  }, []);
+  }, [steps, flowEdges]);
 
   const onNodesChange = useCallback((changes: any) => {
     setNodes((nds) => {
@@ -398,7 +465,8 @@ export default function VisualBuilder({
 
       caseValue = value;
     }
-
+    historyRef.current.push({ steps: [...steps], edges: [...flowEdges] });
+    futureRef.current = [];
     setFlowEdges((eds) => {
       let filtered = eds;
 
@@ -423,10 +491,12 @@ export default function VisualBuilder({
   }, [steps, flowEdges]);
 
   const updateStep = useCallback((stepId: string, patch: any) => {
+    historyRef.current.push({ steps: [...steps], edges: [...flowEdges] });
+    futureRef.current = [];
     setSteps((prev) =>
       prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)),
     );
-  }, [setSteps]);
+  }, [steps, flowEdges, setSteps]);
 
   const updateNodeLabel = useCallback((stepId: string, name: string, type: string) => {
     const step = steps.find((s) => s.id === stepId);
@@ -583,6 +653,8 @@ export default function VisualBuilder({
       },
     };
 
+    historyRef.current.push({ steps: [...steps], edges: [...flowEdges] });
+    futureRef.current = [];
     setNodes((n) => [...n, node]);
     setSteps((prev) => [
       ...prev,
@@ -593,7 +665,7 @@ export default function VisualBuilder({
         prompt: "",
       },
     ]);
-  }, [deleteNode, setNodes, setSteps]);
+  }, [deleteNode, steps, flowEdges, setNodes, setSteps]);
 
   return (
     <div className="h-[720px] rounded-xl border bg-gradient-to-b from-background to-muted/40 relative overflow-hidden">

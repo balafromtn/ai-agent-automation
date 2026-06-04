@@ -701,6 +701,7 @@ export default function WorkflowBuilderPage() {
                 onEdgesChange={(updatedEdges) => {
                   setEdges(updatedEdges);
                 }}
+                onSave={saveWorkflow}
               />
             )}
 
