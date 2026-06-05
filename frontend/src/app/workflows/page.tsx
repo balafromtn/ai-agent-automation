@@ -20,6 +20,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Empty,
   EmptyContent,
   EmptyDescription,
@@ -78,6 +83,23 @@ function getStatusColor(status: string) {
       return "bg-destructive/20 text-destructive border-destructive/30";
     default:
       return "bg-muted text-muted-foreground";
+  }
+}
+
+function getCategoryBadgeClass(category?: string) {
+  switch (category?.toLowerCase()) {
+    case "custom":
+      return "bg-violet-100 text-violet-700 border-violet-200";
+    case "productivity":
+      return "bg-emerald-100 text-emerald-700 border-emerald-200";
+    case "automation":
+      return "bg-primary/15 text-primary border-primary/30";
+    case "documentation":
+      return "bg-amber-100 text-amber-900 border-amber-200";
+    case "data":
+      return "bg-sky-100 text-sky-800 border-sky-200";
+    default:
+      return "bg-muted text-muted-foreground border-border";
   }
 }
 
@@ -252,16 +274,18 @@ const WorkflowCard = memo(
           <span className="text-xs text-muted-foreground font-mono truncate max-w-[160px]">
             {workflow._id.slice(0, 8)}...
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 text-xs"
-            onClick={(e) => {
-              e.preventDefault();
-              onCopy(workflow._id);
-            }}
-          >
-            {isCopied ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onCopy(workflow._id);
+                }}
+              >
+                {isCopied ? (
               <>
                 <Check className="size-3 text-green-500" />
                 <span className="text-green-500">Copied!</span>
@@ -272,7 +296,10 @@ const WorkflowCard = memo(
                 Copy ID
               </>
             )}
-          </Button>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Copy workflow ID</TooltipContent>
+          </Tooltip>
         </div>
       </Card>
     );
@@ -744,7 +771,21 @@ function TemplateSelector({
               {t.description}
             </p>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              {t.category && <Badge variant="secondary">{t.category}</Badge>}
+              {t.category && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge
+                      variant="secondary"
+                      className={getCategoryBadgeClass(t.category)}
+                    >
+                      {t.category}
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    Category: {t.category}
+                  </TooltipContent>
+                </Tooltip>
+              )}
               {t.stepsCount && <span>{t.stepsCount} steps</span>}
             </div>
           </div>

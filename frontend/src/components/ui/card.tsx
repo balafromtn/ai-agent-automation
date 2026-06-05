@@ -1,13 +1,23 @@
+"use client"
+
 import * as React from 'react'
+import { motion } from 'framer-motion'
 
 import { cn } from '@/lib/utils'
 
-function Card({ className, ...props }: React.ComponentProps<'div'>) {
+const MotionCard = motion.div
+
+type CardProps = React.ComponentProps<typeof MotionCard>
+
+function Card({ className, ...props }: CardProps) {
   return (
-    <div
+    <MotionCard
       data-slot="card"
+      whileHover={{ y: -4 }}
+      whileTap={{ scale: 0.995 }}
+      transition={{ duration: 0.24, ease: 'easeOut' }}
       className={cn(
-        'bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm',
+        'bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm transition-shadow duration-200',
         className,
       )}
       {...props}

@@ -1,4 +1,7 @@
+"use client"
+
 import * as React from 'react'
+import { motion } from 'framer-motion'
 import { Slot } from '@radix-ui/react-slot'
 import { cva, type VariantProps } from 'class-variance-authority'
 
@@ -36,6 +39,8 @@ const buttonVariants = cva(
   },
 )
 
+const MotionWrapper = motion.div
+
 function Button({
   className,
   variant,
@@ -49,11 +54,18 @@ function Button({
   const Comp = asChild ? Slot : 'button'
 
   return (
-    <Comp
-      data-slot="button"
-      className={cn(buttonVariants({ variant, size, className }))}
-      {...props}
-    />
+    <MotionWrapper
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: 'easeOut' }}
+      className="inline-block"
+    >
+      <Comp
+        data-slot="button"
+        className={cn(buttonVariants({ variant, size, className }))}
+        {...props}
+      />
+    </MotionWrapper>
   )
 }
 
