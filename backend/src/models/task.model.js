@@ -8,6 +8,8 @@ const StepResultSchema = new mongoose.Schema(
     stepId: { type: String },
     type: { type: String },
     tool: { type: String },
+    serverId: { type: String },
+    toolName: { type: String },
     position: {
       x: Number,
       y: Number,

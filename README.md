@@ -95,7 +95,7 @@ If you like tools such as **n8n**, **Zapier**, or **Temporal** — but want some
 ### 🤖 Agent-Driven Execution
 
 - Autonomous AI agents execute workflows
-- Pluggable LLM support (OpenAI, Gemini, Groq, local models)
+- Multi-provider LLM support (OpenAI, Gemini, Groq, local models)
 - Deterministic execution model
 - Explicit inputs & outputs per step
 - Step-level success / failure tracking
@@ -104,21 +104,26 @@ If you like tools such as **n8n**, **Zapier**, or **Temporal** — but want some
 
 ### 🔗 Workflow Automation
 
-- Visual workflow builder
+- Visual Workflow Builder & Workflow Templates
+- Conditional & Switch Nodes
+- Branching workflows
 - Ordered, sequential steps
 - Supported step types:
   - **LLM** — reasoning & generation
   - **HTTP** — API calls
-  - **Tool** — internal actions
   - **Delay** — time-based control
+  - **File** — file system operations
+  - **Email** — automated email sending
+  - **Browser** — web automation
+  - **Document Query** — RAG and vector search
 
 Each workflow run becomes a **Task** with full traceability.
 
 ---
 
-### ⏱ Scheduling (Cron Automation)
+### ⏱ Scheduling & Webhook Support
 
-- Cron-based schedules
+- Cron-based schedules & Webhook triggers
 - Automatic task creation
 - Ideal for:
   - Monitoring
@@ -151,21 +156,31 @@ Enables agents to recall relevant past interactions across workflow executions.
 
 ---
 
+### 📄 Document Intelligence (RAG)
+
+- Document upload and chunking process
+- Embedding generation
+- Retrieval pipeline and document chat workflow
+
+---
+
 ## 🏗 High-Level Architecture (Simplified)
 
-```
-Frontend (Next.js)
-      ↓
-REST API (Express)
-      ↓
-Workflow Engine
-  ├─ Agent Runner
-  ├─ Step Executor
-  ├─ Tool Registry
-  ├─ Scheduler
-  └─ Logger
-      ↓
-MongoDB (Workflows, Tasks, Agents, Logs)
+```mermaid
+graph TD
+    Frontend["Frontend (Next.js)"] --> API["REST API (Express)"]
+    API --> Engine
+    
+    subgraph Engine["Workflow Engine"]
+        direction TB
+        AgentRunner["Agent Runner"]
+        StepExecutor["Step Executor"]
+        ToolRegistry["Tool Registry (Under Development)"]
+        Scheduler["Scheduler"]
+        Logger["Logger"]
+    end
+    
+    Engine --> DB[("MongoDB (Workflows, Tasks, Agents, Logs)")]
 ```
 
 > 📘 Detailed architecture, execution model, and internals:
@@ -347,6 +362,13 @@ HF_API_KEY=
 
 # Optional local models
 OLLAMA_HOST=http://host.docker.internal:11434
+
+# Rate Limiting (Optional)
+RATE_LIMIT_WINDOW_MS=900000        # 15 minutes window
+RATE_LIMIT_GLOBAL_MAX=100           # Max 100 requests globally per window
+RATE_LIMIT_AUTH_MAX=5               # Max 5 auth attempts per window
+RATE_LIMIT_EXPENSIVE_MAX=10         # Max 10 expensive operations per minute
+RATE_LIMIT_WEBHOOK_MAX=20           # Max 20 webhook requests per minute
 
 # Optional host port overrides (defaults shown)
 MONGO_PORT=27017

@@ -8,7 +8,11 @@ import { AuthGuard } from "@/components/auth/auth-guard";
 import { Activity, Workflow, ListChecks, Bot, Calendar } from "lucide-react";
 import { useAssistantContext } from "@/context/assistant-context";
 import { useApi } from "@/hooks/useApi";
-import { WorkflowList, type Workflow as WorkflowType } from "@/components/workflow-list";
+import { WorkflowList } from "@/components/workflow-list";
+
+/* -----------------------------
+   Types
+------------------------------ */
 
 type DashboardStats = {
   workflows: number;
@@ -27,6 +31,10 @@ type Task = {
     runningBy?: string;
   };
 };
+
+/* -----------------------------
+   Skeleton
+------------------------------ */
 
 function StatSkeleton() {
   return (
@@ -55,29 +63,39 @@ function ActivitySkeleton() {
   );
 }
 
+/* -----------------------------
+   Page
+------------------------------ */
+
 function DashboardPageInner() {
   const { setContext, clearContext } = useAssistantContext();
-
-  // null = not yet mounted, safe for hydration
+  
+  // Hydration safety fixes restored
   const [now, setNow] = useState<number | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
     setNow(Date.now());
+    setIsMounted(true);
   }, []);
 
   const { data: stats, loading: statsLoading } = useApi<DashboardStats>("/dashboard/stats");
   const { data: tasks, loading: tasksLoading } = useApi<Task[]>("/tasks");
-  const { data: workflowsResponse, loading: workflowsLoading } =
-    useApi<any>("/workflows");
+  const { data: workflowsResponse, loading: workflowsLoading } = useApi<any>("/workflows");
 
+  // Safely extract arrays from backend payload
   const workflowsArray = Array.isArray(workflowsResponse) 
     ? workflowsResponse 
     : (workflowsResponse?.data || workflowsResponse?.workflows || []);
 
   const recentTasks = useMemo(() => tasks?.slice(0, 8) ?? [], [tasks]);
 
+  /* -----------------------------
+     Assistant context
+  ------------------------------ */
   useEffect(() => {
     if (!stats || statsLoading) return;
+
     setContext({
       page: "dashboard",
       dashboardStats: stats,
@@ -87,39 +105,54 @@ function DashboardPageInner() {
         status: task.status,
       })),
     });
+
     return () => clearContext();
   }, [stats, recentTasks, statsLoading, setContext, clearContext]);
 
+  /* -----------------------------
+     Helpers
+  ------------------------------ */
   const timeAgo = useCallback((dateString: string) => {
-    if (now === null) return "";
+    if (!now) return "";
     const diff = now - new Date(dateString).getTime();
     const minutes = Math.floor(diff / 60000);
+
     if (minutes < 1) return "just now";
     if (minutes < 60) return `${minutes} min ago`;
+
     const hours = Math.floor(minutes / 60);
     if (hours < 24) return `${hours} hr ago`;
+
     const days = Math.floor(hours / 24);
     return `${days} day${days > 1 ? "s" : ""} ago`;
   }, [now]);
 
   const getStatusColor = useCallback((status: Task["status"]) => {
     switch (status) {
-      case "completed": return "bg-success/20 text-success border-success/30";
-      case "running":   return "bg-warning/20 text-warning border-warning/30";
-      case "failed":    return "bg-destructive/20 text-destructive border-destructive/30";
-      default:          return "bg-muted text-muted-foreground";
+      case "completed":
+        return "bg-success/20 text-success border-success/30";
+      case "running":
+        return "bg-warning/20 text-warning border-warning/30";
+      case "failed":
+        return "bg-destructive/20 text-destructive border-destructive/30";
+      default:
+        return "bg-muted text-muted-foreground";
     }
   }, []);
 
   const statsUI = useMemo(() => [
-    { label: "Total Workflows", value: stats?.workflows ?? 0,   icon: Workflow  },
-    { label: "Total Tasks",     value: stats?.tasks ?? 0,       icon: ListChecks },
-    { label: "Running Tasks",   value: stats?.runningTasks ?? 0, icon: Activity  },
-    { label: "Active Agents",   value: stats?.agents ?? 0,      icon: Bot       },
-    { label: "Schedules",       value: stats?.schedules ?? 0,   icon: Calendar  },
+    { label: "Total Workflows", value: stats?.workflows ?? 0, icon: Workflow },
+    { label: "Total Tasks", value: stats?.tasks ?? 0, icon: ListChecks },
+    { label: "Running Tasks", value: stats?.runningTasks ?? 0, icon: Activity },
+    { label: "Active Agents", value: stats?.agents ?? 0, icon: Bot },
+    { label: "Schedules", value: stats?.schedules ?? 0, icon: Calendar },
   ], [stats]);
 
-  // NO isMounted check — AuthContext already handles hydration properly
+  /* -----------------------------
+     UI
+  ------------------------------ */
+  if (!isMounted) return null;
+
   return (
     <div className="flex min-h-screen">
       <AppSidebar />
@@ -135,7 +168,6 @@ function DashboardPageInner() {
               Overview of your AI automation workflows
             </p>
           </div>
-
           <>
             {/* Stats */}
             <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-5">
@@ -145,6 +177,7 @@ function DashboardPageInner() {
                       <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10">
                         <stat.icon className="size-5 text-primary" />
                       </div>
+
                       <div className="mt-4">
                         <p className="text-3xl font-bold">{stat.value}</p>
                         <p className="mt-1 text-sm font-medium">{stat.label}</p>
@@ -156,10 +189,10 @@ function DashboardPageInner() {
                   ))}
             </div>
 
-            {/* Main grid */}
+            {/* Split Grid Layout */}
             <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
 
-              {/* Workflows */}
+              {/* Left Side: Workflows */}
               <div className="lg:col-span-2">
                 <Card className="p-6">
                   <h2 className="mb-4 text-xl font-semibold">Your Workflows</h2>
@@ -170,10 +203,11 @@ function DashboardPageInner() {
                 </Card>
               </div>
 
-              {/* Recent Activity */}
+              {/* Right Side: Recent Activity */}
               <div className="lg:col-span-1">
                 <Card className="p-6">
                   <h2 className="mb-4 text-xl font-semibold">Recent Activity</h2>
+
                   <div className="space-y-3">
                     {tasksLoading ? (
                       Array.from({ length: 5 }).map((_, i) => (
@@ -189,6 +223,7 @@ function DashboardPageInner() {
                             <Badge className={getStatusColor(task.status)}>
                               {task.status}
                             </Badge>
+
                             <div>
                               <p className="font-medium">{task.name}</p>
                               <p className="text-xs text-muted-foreground">
@@ -196,10 +231,8 @@ function DashboardPageInner() {
                               </p>
                             </div>
                           </div>
-                          <span
-                            className="text-sm text-muted-foreground"
-                            suppressHydrationWarning
-                          >
+
+                          <span className="text-sm text-muted-foreground">
                             {timeAgo(task.startedAt)}
                           </span>
                         </div>
@@ -212,6 +245,7 @@ function DashboardPageInner() {
                   </div>
                 </Card>
               </div>
+              
             </div>
           </>
         </div>

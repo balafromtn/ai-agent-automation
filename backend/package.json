@@ -28,6 +28,7 @@
     "debug": "^4.3.4",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.5.2",
     "form-data": "^4.0.5",
     "groq-sdk": "^0.37.0",
     "huggingface": "^1.4.0",
@@ -43,7 +44,8 @@
     "playwright": "^1.56.1",
     "puppeteer": "^24.31.0",
     "three": "^0.181.2",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "nodemon": "^3.1.11"

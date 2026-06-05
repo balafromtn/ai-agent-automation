@@ -8,9 +8,10 @@ import ReactFlow, {
   useEdgesState,
   Connection,
   Node,
+  NodeDragHandler,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiUrl } from "@/lib/api";
 import { generateNodeId, generateEdgeId } from "@/utils/ids";
 import { duplicateNodesSafely } from "@/utils/graphValidation";
@@ -23,6 +24,7 @@ type StepType =
   | "HTTP"
   | "Delay"
   | "Tool"
+  | "MCP"
   | "Document"
   | "Condition"
   | "Switch"
@@ -58,6 +60,8 @@ function getNodeColor(type: string) {
       return "#2563eb"; // blue
     case "Tool":
       return "#f59e0b"; // orange
+    case "MCP":
+      return "#0f766e"; // teal
     case "Document":
       return "#16a34a"; // green
     case "Delay":
@@ -95,6 +99,11 @@ function buildNodePreview(step: any, edges: CustomEdge[], allSteps: any[]) {
 
   if (step.type === "Tool") {
     rows.push({ name: "tool", type: "string" });
+  }
+
+  if (step.type === "MCP") {
+    rows.push({ name: "server", type: step.serverId || "unset" });
+    rows.push({ name: "tool", type: step.toolName || "unset" });
   }
 
   if (step.type === "Document") {
@@ -196,7 +205,7 @@ function computeNodes(
           </div>
         ),
       },
-      style: {
+style: {
         padding: "12px 16px",
         borderRadius: "12px",
         border: `1px solid ${getNodeColor(step.type)}`,
@@ -209,6 +218,7 @@ function computeNodes(
         maxWidth: 240,
         textAlign: "center" as const,
         boxShadow: `0 0 0 1px ${getNodeColor(step.type)}20, 0 2px 6px rgba(0,0,0,0.05)`,
+        touchAction: "none", 
       },
     };
   });
@@ -219,17 +229,27 @@ export default function VisualBuilder({
   setSteps,
   edges,
   onEdgesChange,
+  onSave,
 }: {
   steps: any[];
   setSteps: React.Dispatch<React.SetStateAction<any[]>>;
   edges: any[];
   onEdgesChange: (edges: any[]) => void;
+  onSave?: () => void;
 }) {
   usePerformanceMonitor("VisualBuilder");
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const historyRef = useRef<{ steps: any[]; edges: CustomEdge[] }[]>([]);
+  const futureRef = useRef<{ steps: any[]; edges: CustomEdge[] }[]>([]);
   const [documents, setDocuments] = useState<any[]>([]);
+  const [mcpTools, setMcpTools] = useState<any[]>([]);
   const [flowEdges, setFlowEdges] = useState<CustomEdge[]>(() => edges || []);
   const selectedStep = steps.find((s) => s.id === selectedNode?.id);
+  const selectedMcpTool = mcpTools.find(
+    (tool) =>
+      tool.serverId === selectedStep?.serverId &&
+      tool.name === selectedStep?.toolName,
+  );
 
   useEffect(() => {
     onEdgesChange(flowEdges);
@@ -237,20 +257,20 @@ export default function VisualBuilder({
 
   const deleteNode = useCallback(
     (nodeId: string) => {
+      setSteps((prev) => {
+        historyRef.current.push({ steps: [...prev], edges: [...flowEdges] });
+        futureRef.current = [];
+        return prev.filter((s) => s.id !== nodeId);
+      });
       setFlowEdges((eds) =>
         eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId),
       );
-
-      setSteps((prev) => prev.filter((s) => s.id !== nodeId));
-
       setSelectedNode((prev) => (prev?.id === nodeId ? null : prev));
     },
     [setSteps],
   );
 
-  const [computedNodes, setComputedNodes] = useState(() =>
-    computeNodes(steps, flowEdges, deleteNode),
-  );
+  const [computedNodes, setComputedNodes] = useState<Node[]>([]);
 
   useEffect(() => {
     setComputedNodes(computeNodes(steps, flowEdges, deleteNode));
@@ -296,6 +316,8 @@ export default function VisualBuilder({
           target: idMap.get(edge.target) || edge.target,
         }));
 
+        historyRef.current.push({ steps: [...steps], edges: [...flowEdges] });
+        futureRef.current = [];
         setSteps((prev) => [...prev, ...clonedSteps]);
         if (clonedEdges.length > 0) {
           setFlowEdges((prev) => [...prev, ...clonedEdges]);
@@ -307,17 +329,81 @@ export default function VisualBuilder({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [nodes, steps, flowEdges, setSteps]);
 
+  /* ---------- KEYBOARD SHORTCUTS: Save / Delete / Undo / Redo ---------- */
+  useEffect(() => {
+    const isInputFocused = () => {
+      const el = document.activeElement;
+      if (!el) return false;
+      const tag = (el as HTMLElement).tagName.toLowerCase();
+      return (
+        tag === "input" ||
+        tag === "textarea" ||
+        (el as HTMLElement).isContentEditable
+      );
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isInputFocused()) return;
+
+      const isMod = e.metaKey || e.ctrlKey;
+
+      if (isMod && e.key === "s") {
+        e.preventDefault();
+        onSave?.();
+        return;
+      }
+
+      if (isMod && !e.shiftKey && e.key === "z") {
+        e.preventDefault();
+        if (historyRef.current.length === 0) return;
+        const snapshot = historyRef.current.pop()!;
+        futureRef.current.push({ steps, edges: flowEdges });
+        setSteps(snapshot.steps);
+        setFlowEdges(snapshot.edges);
+        setSelectedNode(null);
+        return;
+      }
+
+      if (isMod && e.shiftKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (futureRef.current.length === 0) return;
+        const snapshot = futureRef.current.pop()!;
+        historyRef.current.push({ steps, edges: flowEdges });
+        setSteps(snapshot.steps);
+        setFlowEdges(snapshot.edges);
+        setSelectedNode(null);
+        return;
+      }
+
+      if (e.key === "Delete" && selectedNode) {
+        e.preventDefault();
+        deleteNode(selectedNode.id);
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onSave, selectedNode, steps, flowEdges, deleteNode, setSteps]);
+
   /* ---------- EVENTS ---------- */
 
   const onNodeClick = useCallback((_: any, node: Node) => {
     setSelectedNode(node);
   }, []);
 
+  const onNodeDragStart: NodeDragHandler = useCallback((_event, _node) => {
+    historyRef.current.push({ steps: [...steps], edges: [...flowEdges] });
+    futureRef.current = [];
+  }, [steps, flowEdges]);
+
   const handleEdgesDelete = useCallback((deletedEdges: any[]) => {
+    historyRef.current.push({ steps: [...steps], edges: [...flowEdges] });
+    futureRef.current = [];
     setFlowEdges((eds) =>
       eds.filter((edge) => !deletedEdges.some((d) => d.id === edge.id)),
     );
-  }, []);
+  }, [steps, flowEdges]);
 
   const onNodesChange = useCallback((changes: any) => {
     setNodes((nds) => {
@@ -398,7 +484,8 @@ export default function VisualBuilder({
 
       caseValue = value;
     }
-
+    historyRef.current.push({ steps: [...steps], edges: [...flowEdges] });
+    futureRef.current = [];
     setFlowEdges((eds) => {
       let filtered = eds;
 
@@ -423,10 +510,12 @@ export default function VisualBuilder({
   }, [steps, flowEdges]);
 
   const updateStep = useCallback((stepId: string, patch: any) => {
+    historyRef.current.push({ steps: [...steps], edges: [...flowEdges] });
+    futureRef.current = [];
     setSteps((prev) =>
       prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)),
     );
-  }, [setSteps]);
+  }, [steps, flowEdges, setSteps]);
 
   const updateNodeLabel = useCallback((stepId: string, name: string, type: string) => {
     const step = steps.find((s) => s.id === stepId);
@@ -502,6 +591,26 @@ export default function VisualBuilder({
   }, []);
 
   useEffect(() => {
+    async function fetchMcpTools() {
+      try {
+        const res = await fetch(apiUrl("/mcp/tools"), {
+          headers: {
+            Authorization: "Bearer " + localStorage.getItem("token"),
+          },
+        });
+        const data = await res.json();
+        if (data.ok) {
+          setMcpTools(data.tools || []);
+        }
+      } catch (err) {
+        console.error("Failed to load MCP tools", err);
+      }
+    }
+
+    fetchMcpTools();
+  }, []);
+
+  useEffect(() => {
     setNodes((nds) => {
       let changed = false;
       const next = nds.map((node) => {
@@ -567,7 +676,7 @@ export default function VisualBuilder({
           </div>
         ),
       },
-      style: {
+ style: {
         padding: "12px 16px",
         borderRadius: "12px",
         border: `1px solid ${getNodeColor("LLM")}`,
@@ -580,9 +689,12 @@ export default function VisualBuilder({
         maxWidth: 240,
         textAlign: "center" as const,
         boxShadow: `0 0 0 1px ${getNodeColor("LLM")}20, 0 2px 6px rgba(0,0,0,0.05)`,
+        touchAction: "none", 
       },
     };
 
+    historyRef.current.push({ steps: [...steps], edges: [...flowEdges] });
+    futureRef.current = [];
     setNodes((n) => [...n, node]);
     setSteps((prev) => [
       ...prev,
@@ -593,7 +705,7 @@ export default function VisualBuilder({
         prompt: "",
       },
     ]);
-  }, [deleteNode, setNodes, setSteps]);
+  }, [deleteNode, steps, flowEdges, setNodes, setSteps]);
 
   return (
     <div className="h-[720px] rounded-xl border bg-gradient-to-b from-background to-muted/40 relative overflow-hidden">
@@ -609,11 +721,13 @@ export default function VisualBuilder({
       <ReactFlow
         nodes={nodes}
         edges={flowEdges}
+        nodesDraggable={true}
         onConnect={onConnect}
         onNodesChange={onNodesChange}
         onEdgesChange={handleEdgesChange}
         onEdgesDelete={handleEdgesDelete}
         onNodeClick={onNodeClick}
+        onNodeDragStart={onNodeDragStart}
         proOptions={{ hideAttribution: true }}
         connectionLineStyle={{ strokeWidth: 2 }}
         defaultEdgeOptions={{
@@ -690,6 +804,7 @@ export default function VisualBuilder({
                 <option value="HTTP">HTTP</option>
                 <option value="Delay">Delay</option>
                 <option value="Tool">Tool</option>
+                <option value="MCP">MCP</option>
                 <option value="Document">Document</option>
                 <option value="Condition">Condition</option>
                 <option value="Switch">Switch</option>
@@ -807,6 +922,97 @@ export default function VisualBuilder({
                   <option value="browser">Browser</option>
                 </select>
               </div>
+            )}
+
+            {selectedStep.type === "MCP" && (
+              <>
+                <div className="rounded-lg border border-muted p-3 text-xs text-muted-foreground">
+                  External MCP tools are discovered from your configured MCP
+                  servers in Settings.
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Server</label>
+                  <select
+                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30 mt-1 bg-background"
+                    value={selectedStep.serverId || ""}
+                    onChange={(e) => {
+                      updateStep(selectedStep.id, {
+                        serverId: e.target.value,
+                        toolName: "",
+                      });
+                    }}
+                  >
+                    <option value="" disabled>Select server</option>
+                    {Array.from(
+                      new Map(
+                        mcpTools.map((tool) => [
+                          tool.serverId,
+                          tool.serverName || tool.serverId,
+                        ]),
+                      ).entries(),
+                    ).map(([serverId, serverName]) => (
+                      <option key={serverId} value={serverId}>
+                        {serverName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Tool</label>
+                  <select
+                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30 mt-1 bg-background"
+                    value={selectedStep.toolName || ""}
+                    onChange={(e) =>
+                      updateStep(selectedStep.id, { toolName: e.target.value })
+                    }
+                    disabled={!selectedStep.serverId}
+                  >
+                    <option value="" disabled>Select tool</option>
+                    {mcpTools
+                      .filter((tool) => tool.serverId === selectedStep.serverId)
+                      .map((tool) => (
+                        <option key={tool.id} value={tool.name}>
+                          {tool.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">
+                    Timeout (ms)
+                  </label>
+                  <input
+                    type="number"
+                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30 mt-1 bg-background"
+                    value={selectedStep.timeoutMs || 30000}
+                    onChange={(e) =>
+                      updateStep(selectedStep.id, {
+                        timeoutMs: Number(e.target.value),
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">
+                    Arguments (JSON)
+                  </label>
+                  <textarea
+                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30 mt-1 bg-background min-h-[140px] font-mono text-xs"
+                    value={selectedStep.arguments || "{\n  \n}"}
+                    onChange={(e) =>
+                      updateStep(selectedStep.id, { arguments: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="rounded-lg border border-muted p-3">
+                  <div className="text-xs font-medium mb-2">Tool Schema</div>
+                  <pre className="text-[11px] leading-5 whitespace-pre-wrap break-words text-muted-foreground">
+                    {selectedMcpTool
+                      ? JSON.stringify(selectedMcpTool.inputSchema, null, 2)
+                      : "Select an MCP tool to inspect its input schema."}
+                  </pre>
+                </div>
+              </>
             )}
 
             {selectedStep.type === "Tool" && selectedStep.tool === "email" && (

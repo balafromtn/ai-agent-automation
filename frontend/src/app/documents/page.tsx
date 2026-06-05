@@ -221,7 +221,7 @@ export default function DocumentsPage() {
                       </EmptyMedia>
                       <EmptyTitle>No results found</EmptyTitle>
                       <EmptyDescription>
-                        We couldn't find any matches for "{search}". Check your spelling or try another keyword.
+                        We couldn&apos;t find any matches for &quot;{search}&quot;. Check your spelling or try another keyword.
                       </EmptyDescription>
                     </EmptyHeader>
                     <EmptyContent>

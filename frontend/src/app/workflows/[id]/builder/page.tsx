@@ -34,6 +34,7 @@ type StepType =
   | "HTTP"
   | "Delay"
   | "Tool"
+  | "MCP"
   | "Document"
   | "Condition"
   | "Switch"
@@ -82,6 +83,12 @@ type WorkflowStep = {
   // Browser
   code?: string;
 
+  // MCP
+  serverId?: string;
+  toolName?: string;
+  arguments?: string;
+  timeoutMs?: number;
+
   // Document RAG
   documentId?: string;
   query?: string;
@@ -122,6 +129,7 @@ type BackendStep = {
     | "llm"
     | "http"
     | "delay"
+    | "mcp"
     | "condition"
     | "switch"
     | "document_query"
@@ -162,6 +170,8 @@ function getTypeColor(type: StepType) {
       return "bg-purple-500/20 text-purple-400 border-purple-500/30";
     case "Tool":
       return "bg-green-500/20 text-green-400 border-green-500/30";
+    case "MCP":
+      return "bg-teal-500/20 text-teal-400 border-teal-500/30";
     case "Document":
       return "bg-orange-500/20 text-orange-400 border-orange-500/30";
     default:
@@ -205,6 +215,9 @@ function summarizeStep(step: WorkflowStep) {
           }`
         : "No query configured";
 
+    case "MCP":
+      return `MCP → ${step.serverId || "no server"} / ${step.toolName || "no tool"}`;
+
     case "Tool": {
       if (!step.tool) return "Tool not selected";
       if (step.tool === "email") {
@@ -230,6 +243,7 @@ export default function WorkflowBuilderPage() {
   const [workflowName, setWorkflowName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState<any[]>([]);
+  const [mcpTools, setMcpTools] = useState<any[]>([]);
   const [builderMode, setBuilderMode] = useState<"list" | "visual">("list");
   const { addToast } = useToast();
   const [edges, setEdges] = useState<any[]>([]);
@@ -271,6 +285,8 @@ export default function WorkflowBuilderPage() {
                   ? "Switch"
                   : s.type === "document_query"
                     ? "Document"
+                    : s.type === "mcp"
+                      ? "MCP"
                     : s.type === "github"
                       ? "GitHub"
                       : s.type === "slack"
@@ -303,6 +319,13 @@ export default function WorkflowBuilderPage() {
         path: (s as any).path ?? "",
         content: (s as any).content ?? "",
         code: (s as any).code ?? "",
+        serverId: (s as any).serverId ?? "",
+        toolName: (s as any).toolName ?? "",
+        arguments:
+          typeof (s as any).arguments === "string"
+            ? (s as any).arguments
+            : JSON.stringify((s as any).arguments ?? {}, null, 2),
+        timeoutMs: (s as any).timeoutMs ?? 30000,
         documentId: (s as any).documentId ?? "",
         query: (s as any).query ?? "",
         topK: (s as any).topK ?? 4,
@@ -378,6 +401,26 @@ export default function WorkflowBuilderPage() {
       }
     }
     fetchDocs();
+  }, []);
+
+  useEffect(() => {
+    async function fetchMcpTools() {
+      try {
+        const res = await fetch(apiUrl("/mcp/tools"), {
+          headers: {
+            Authorization: "Bearer " + localStorage.getItem("token"),
+          },
+        });
+        const data = await res.json();
+        if (data.ok) {
+          setMcpTools(data.tools || []);
+        }
+      } catch (err) {
+        console.error("Failed to fetch MCP tools", err);
+      }
+    }
+
+    fetchMcpTools();
   }, []);
 
   function addStep() {
@@ -466,6 +509,28 @@ export default function WorkflowBuilderPage() {
             documentId: s.documentId,
             query: s.query,
             topK: s.topK ?? 4,
+          };
+        }
+        if (s.type === "MCP") {
+          let parsedArguments: any = {};
+
+          if ((s.arguments || "").trim()) {
+            try {
+              parsedArguments = JSON.parse(s.arguments || "{}");
+            } catch {
+              parsedArguments = s.arguments || "";
+            }
+          }
+
+          return {
+            stepId: s.id,
+            name: s.name,
+            position: s.position,
+            type: "mcp",
+            serverId: s.serverId ?? "",
+            toolName: s.toolName ?? "",
+            arguments: parsedArguments,
+            timeoutMs: s.timeoutMs ?? 30000,
           };
         }
         if (s.type === "Condition") {
@@ -701,6 +766,7 @@ export default function WorkflowBuilderPage() {
                 onEdgesChange={(updatedEdges) => {
                   setEdges(updatedEdges);
                 }}
+                onSave={saveWorkflow}
               />
             )}
 
@@ -799,6 +865,7 @@ export default function WorkflowBuilderPage() {
                                 <SelectItem value="HTTP">HTTP Request</SelectItem>
                                 <SelectItem value="Delay">Delay</SelectItem>
                                 <SelectItem value="Tool">Tool</SelectItem>
+                                <SelectItem value="MCP">MCP</SelectItem>
                                 <SelectItem value="Document">Document Query</SelectItem>
                                 <SelectItem value="Condition">Condition</SelectItem>
                                 <SelectItem value="Switch">Switch</SelectItem>
@@ -1075,6 +1142,111 @@ export default function WorkflowBuilderPage() {
                                       body: e.target.value,
                                     })
                                   }
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          {step.type === "MCP" && (
+                            <>
+                              <div className="rounded-lg border border-muted p-3 text-xs text-muted-foreground">
+                                MCP tools come from the servers configured on the
+                                Settings page.
+                              </div>
+                              <div>
+                                <Label>Server</Label>
+                                <Select
+                                  value={step.serverId}
+                                  onValueChange={(v) =>
+                                    updateStep(step.id, {
+                                      serverId: v,
+                                      toolName: "",
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger className="mt-1.5">
+                                    <SelectValue placeholder="Select server" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {Array.from(
+                                      new Map(
+                                        mcpTools.map((tool) => [
+                                          tool.serverId,
+                                          tool.serverName || tool.serverId,
+                                        ]),
+                                      ).entries(),
+                                    ).map(([serverId, serverName]) => (
+                                      <SelectItem key={serverId} value={serverId}>
+                                        {serverName}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label>Tool</Label>
+                                <Select
+                                  value={step.toolName}
+                                  onValueChange={(v) =>
+                                    updateStep(step.id, { toolName: v })
+                                  }
+                                >
+                                  <SelectTrigger className="mt-1.5">
+                                    <SelectValue placeholder="Select tool" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {mcpTools
+                                      .filter(
+                                        (tool) => tool.serverId === step.serverId,
+                                      )
+                                      .map((tool) => (
+                                        <SelectItem key={tool.id} value={tool.name}>
+                                          {tool.name}
+                                        </SelectItem>
+                                      ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label>Arguments (JSON)</Label>
+                                <Textarea
+                                  className="mt-1.5 min-h-[120px] font-mono text-sm"
+                                  value={step.arguments ?? "{\n  \n}"}
+                                  onChange={(e) =>
+                                    updateStep(step.id, {
+                                      arguments: e.target.value,
+                                    })
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <Label>Timeout (ms)</Label>
+                                <Input
+                                  className="mt-1.5"
+                                  type="number"
+                                  value={step.timeoutMs ?? 30000}
+                                  onChange={(e) =>
+                                    updateStep(step.id, {
+                                      timeoutMs: Number(e.target.value),
+                                    })
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <Label>Input Schema</Label>
+                                <Textarea
+                                  className="mt-1.5 min-h-[140px] font-mono text-xs"
+                                  readOnly
+                                  value={JSON.stringify(
+                                    mcpTools.find(
+                                      (tool) =>
+                                        tool.serverId === step.serverId &&
+                                        tool.name === step.toolName,
+                                    )?.inputSchema ??
+                                      "Select an MCP tool to inspect its schema.",
+                                    null,
+                                    2,
+                                  )}
                                 />
                               </div>
                             </>
