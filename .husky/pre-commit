@@ -1,0 +1,2 @@
+# pre-commit hook — runs before every commit is created.
+# Linting check disabled. Add lint or test commands here if needed in future.

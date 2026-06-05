@@ -348,6 +348,13 @@ HF_API_KEY=
 # Optional local models
 OLLAMA_HOST=http://host.docker.internal:11434
 
+# Rate Limiting (Optional)
+RATE_LIMIT_WINDOW_MS=900000        # 15 minutes window
+RATE_LIMIT_GLOBAL_MAX=100           # Max 100 requests globally per window
+RATE_LIMIT_AUTH_MAX=5               # Max 5 auth attempts per window
+RATE_LIMIT_EXPENSIVE_MAX=10         # Max 10 expensive operations per minute
+RATE_LIMIT_WEBHOOK_MAX=20           # Max 20 webhook requests per minute
+
 # Optional host port overrides (defaults shown)
 MONGO_PORT=27017
 BACKEND_PORT=5000
