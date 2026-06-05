@@ -35,6 +35,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { motion } from "framer-motion";
 import { useAssistantContext } from "@/context/assistant-context";
 import { useToast } from "@/hooks/use-toast";
 import { apiUrl } from "@/lib/api";
@@ -166,12 +167,17 @@ const WorkflowCard = memo(
     };
 
     return (
-      <Card className="p-6">
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            {isEditing ? (
-              <div className="flex items-center gap-2">
-                <input
+      <motion.div
+        whileHover={{ y: -4 }}
+        transition={{ duration: 0.24, ease: "easeOut" }}
+        className="group"
+      >
+        <Card className="p-6">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              {isEditing ? (
+                <div className="flex items-center gap-2">
+                  <input
   type="text"
   value={editName}
   onChange={(e) => setEditName(e.target.value)}
@@ -193,82 +199,100 @@ const WorkflowCard = memo(
   disabled={isSaving}
   className="text-lg font-semibold bg-background border border-input rounded px-2 py-1 flex-1"
 />
-                {isSaving && (
-                  <span className="text-sm text-muted-foreground">Saving...</span>
-                )}
-              </div>
-            ) : (
-              <div
-                className="group flex items-center gap-2"
-                onDoubleClick={() => {
-                  setIsEditing(true);
-                  setEditName(workflow.name);
-                }}
-              >
-                <Link
-                  href={`/workflows/${workflow._id}`}
-                  className="text-lg font-semibold hover:text-primary"
-                >
-                  {workflow.name}
-                </Link>
-                <button
-                  onClick={() => {
+                  {isSaving && (
+                    <span className="text-sm text-muted-foreground">Saving...</span>
+                  )}
+                </div>
+              ) : (
+                <div
+                  className="group flex items-center gap-2"
+                  onDoubleClick={() => {
                     setIsEditing(true);
                     setEditName(workflow.name);
                   }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity"
-                  aria-label="Edit name"
                 >
-                  <Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" />
-                </button>
-              </div>
-            )}
-            {workflow.description && (
-              <p className="mt-2 text-sm text-muted-foreground">
-                {workflow.description}
-              </p>
-            )}
+                  <Link
+                    href={`/workflows/${workflow._id}`}
+                    className="text-lg font-semibold hover:text-primary"
+                  >
+                    {workflow.name}
+                  </Link>
+                  <button
+                    onClick={() => {
+                      setIsEditing(true);
+                      setEditName(workflow.name);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity"
+                    aria-label="Edit name"
+                  >
+                    <Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" />
+                  </button>
+                </div>
+              )}
+              {workflow.description && (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {workflow.description}
+                </p>
+              )}
+            </div>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onEdit(workflow);
+                  }}
+                >
+                  Edit Workflow Details
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-destructive"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onDelete(workflow._id);
+                  }}
+                >
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-            <DropdownMenuItem
+          <div className="mt-4 flex flex-wrap items-center gap-2 overflow-hidden opacity-0 max-h-0 transition-all duration-200 group-hover:opacity-100 group-hover:max-h-24">
+            <Button variant="outline" size="sm" onClick={() => onEdit(workflow)}>
+              Edit details
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                onEdit(workflow);
-  }}
->
-  Edit Workflow Details
-</DropdownMenuItem>
-              <DropdownMenuItem
-                className="text-destructive"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onDelete(workflow._id);
-                }}
-              >
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <Badge className={getStatusColor(workflow.status)}>
-            {workflow.status}
-          </Badge>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Bot className="size-4" />
-            <span>{agentName}</span>
+                onDelete(workflow._id);
+              }}
+            >
+              Delete
+            </Button>
           </div>
-        </div>
+
+          <div className="mt-4 flex items-center justify-between">
+            <Badge className={getStatusColor(workflow.status)}>
+              {workflow.status}
+            </Badge>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Bot className="size-4" />
+              <span>{agentName}</span>
+            </div>
+          </div>
 
         <div className="mt-3 flex items-center justify-between border-t pt-3">
           <span className="text-xs text-muted-foreground font-mono truncate max-w-[160px]">
@@ -302,6 +326,7 @@ const WorkflowCard = memo(
           </Tooltip>
         </div>
       </Card>
+    </motion.div>
     );
   }
 );
