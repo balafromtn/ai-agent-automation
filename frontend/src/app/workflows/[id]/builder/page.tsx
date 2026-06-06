@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import VisualBuilder from "@/components/workflow/visual-builder";
 import { Textarea } from "@/components/ui/textarea";
 import { useEffect } from "react";
-import { Save, Play, Plus, Trash2 } from "lucide-react";
+import { Save, Play, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { generateNodeId } from "@/utils/ids"; // ✅ Using centralized ID system
 import {
   Select,
@@ -250,6 +250,7 @@ export default function WorkflowBuilderPage() {
   const { setContext, clearContext } = useAssistantContext();
   const [savedStepsSnapshot, setSavedStepsSnapshot] = useState<string>("[]");
   const [savedEdgesSnapshot, setSavedEdgesSnapshot] = useState<string>("[]");
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
   const hasUnsavedChanges = 
     JSON.stringify(steps) !== savedStepsSnapshot || 
@@ -265,6 +266,15 @@ export default function WorkflowBuilderPage() {
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [hasUnsavedChanges]);
+
+  useEffect(() => {
+    if (steps.length === 0) {
+      setValidationErrors([]);
+      return;
+    }
+    const validation = validateGraphIntegrity(steps, edges);
+    setValidationErrors(validation.errors);
+  }, [steps, edges]);
 
   async function fetchWorkflow() {
     try {
@@ -786,16 +796,37 @@ export default function WorkflowBuilderPage() {
                 >
                   ← Back to Workflow
                 </Button>
-                <Button variant="outline" disabled={!hasUnsavedChanges}>
+                <Button variant="outline" disabled={!hasUnsavedChanges || validationErrors.length > 0}>
                   <Save className="mr-2 size-4" />
                   Save Draft
                 </Button>
-                <Button onClick={saveWorkflow} disabled={!hasUnsavedChanges}>
+                <Button onClick={saveWorkflow} disabled={!hasUnsavedChanges || validationErrors.length > 0}>
                   <Play className="mr-2 size-4" />
                   Save Changes
                 </Button>
               </div>
             </div>
+
+            {validationErrors.length > 0 && (
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }} 
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-8 rounded-lg border border-destructive/50 bg-destructive/10 p-5 text-destructive"
+              >
+                <h3 className="mb-3 flex items-center gap-2 font-semibold">
+                  <AlertTriangle className="size-5" />
+                  Workflow Validation Errors ({validationErrors.length})
+                </h3>
+                <ul className="ml-6 list-disc space-y-1.5 text-sm">
+                  {validationErrors.map((err, i) => (
+                    <li key={i}>{err}</li>
+                  ))}
+                </ul>
+                <p className="mt-4 text-xs font-medium opacity-80">
+                  You must resolve these errors before the workflow can be saved or executed.
+                </p>
+              </motion.div>
+            )}
 
             {/* Render Canvas vs List view toggles */}
             {builderMode === "visual" && (
@@ -807,6 +838,7 @@ export default function WorkflowBuilderPage() {
                   setEdges(updatedEdges);
                 }}
                 onSave={saveWorkflow}
+                validationErrors={validationErrors}
               />
             )}
 

@@ -75,32 +75,127 @@ export const sanitizeImportedGraph = (
 };
 
 /**
- * Structural Validation Layer
- * Inspects the workflow graph for schema validity before saving to the backend engine.
+ * Structural & Step Validation Layer
+ * Inspects the workflow graph for unreachable nodes, missing fields, and invalid branches.
  */
 export const validateGraphIntegrity = (nodes: any[], edges: any[]): { isValid: boolean; errors: string[] } => {
   const errors: string[] = [];
   const nodeIds = new Set<string>();
+  const inDegree = new Map<string, number>();
+  const outDegree = new Map<string, number>();
 
-  // 1. Audit Node Uniqueness
+  (nodes || []).forEach(n => {
+    inDegree.set(n.id, 0);
+    outDegree.set(n.id, 0);
+  });
+
+  const seenIds = new Set<string>();
   (nodes || []).forEach((node) => {
     if (!node.id) {
-      errors.push("Encountered an invalid node structure missing an explicit ID token.");
+      errors.push(`Encountered an invalid node structure missing an explicit ID (Type: ${node.type || 'Unknown'}).`);
       return;
     }
-    if (nodeIds.has(node.id)) {
-      errors.push(`Graph Violation: Duplicate Node ID collision discovered for '${node.id}'.`);
+    if (seenIds.has(node.id)) {
+      errors.push(`Graph Violation: Duplicate Node ID discovered for '${node.name || node.id}'.`);
     }
+    seenIds.add(node.id);
     nodeIds.add(node.id);
   });
 
-  // 2. Audit Edge Connections and Reference Pointers
   (edges || []).forEach((edge) => {
-    if (!nodeIds.has(edge.source)) {
-      errors.push(`Orphaned Reference: Edge link '${edge.id}' references a source node identifier '${edge.source}' that does not exist in the canvas state.`);
+    if (nodeIds.has(edge.source)) {
+      outDegree.set(edge.source, (outDegree.get(edge.source) || 0) + 1);
     }
-    if (!nodeIds.has(edge.target)) {
-      errors.push(`Orphaned Reference: Edge link '${edge.id}' references a target node identifier '${edge.target}' that does not exist in the canvas state.`);
+    if (nodeIds.has(edge.target)) {
+      inDegree.set(edge.target, (inDegree.get(edge.target) || 0) + 1);
+    }
+  });
+
+  if (nodes && nodes.length > 0) {
+    const startNodes = nodes.filter(n => inDegree.get(n.id) === 0);
+    
+    if (startNodes.length === 0) {
+      errors.push("Graph Topology: Workflow lacks a valid starting point (all nodes have incoming edges, indicating an infinite loop).");
+    }
+
+      if (nodes.length > 1) {
+      nodes.forEach(n => {
+        if (inDegree.get(n.id) === 0 && outDegree.get(n.id) === 0) {
+          errors.push(`Graph Topology: Node '${n.name || n.type}' (ID: ${n.id}) is completely disconnected.`);
+        }
+      });
+    }
+
+    const visited = new Set<string>();
+    const queue = [...startNodes.map(n => n.id)];
+    const adj = new Map<string, string[]>();
+    
+    nodes.forEach(n => adj.set(n.id, []));
+    (edges || []).forEach(e => {
+        if (adj.has(e.source)) adj.get(e.source)!.push(e.target);
+    });
+
+    while(queue.length > 0) {
+        const current = queue.shift()!;
+        if (!visited.has(current)) {
+            visited.add(current);
+            const neighbors = adj.get(current) || [];
+            queue.push(...neighbors);
+        }
+    }
+
+    nodes.forEach(n => {
+        if (!visited.has(n.id) && !(inDegree.get(n.id) === 0 && outDegree.get(n.id) === 0)) {
+            errors.push(`Graph Topology: Node '${n.name || n.type}' is unreachable from any starting point.`);
+        }
+    });
+  }
+
+  (nodes || []).forEach((node) => {
+    const stepName = node.name || node.type;
+
+    if (node.type === "LLM" || node.type === "llm") {
+      if (!node.prompt || node.prompt.trim() === "") {
+        errors.push(`Step Validation: LLM step '${stepName}' is missing a required prompt.`);
+      }
+    }
+
+    if (node.type === "Tool" || node.type === "tool") {
+      if (!node.tool) {
+        errors.push(`Step Validation: Tool step '${stepName}' has no tool type selected.`);
+      } else {
+         if (node.tool === "email" && (!node.to || node.to.trim() === "")) {
+             errors.push(`Step Validation: Email tool '${stepName}' is missing a recipient address.`);
+         }
+         if (node.tool === "file" && (!node.path || node.path.trim() === "")) {
+             errors.push(`Step Validation: File tool '${stepName}' is missing a file path.`);
+         }
+         if (node.tool === "browser" && node.action !== 'evaluate' && (!node.url || node.url.trim() === "")) {
+             errors.push(`Step Validation: Browser tool '${stepName}' is missing a target URL.`);
+         }
+      }
+    }
+
+    if (node.type === "Condition" || node.type === "condition") {
+        const outEdges = (edges || []).filter(e => e.source === node.id);
+        const hasTrue = outEdges.some(e => e.condition === "true" || e.label?.toLowerCase() === "true");
+        const hasFalse = outEdges.some(e => e.condition === "false" || e.label?.toLowerCase() === "false");
+
+        if (!hasTrue || !hasFalse) {
+            errors.push(`Step Validation: Condition step '${stepName}' is missing a 'true' or 'false' branch connection.`);
+        }
+    }
+
+    if (node.type === "Switch" || node.type === "switch") {
+        const outEdges = (edges || []).filter(e => e.source === node.id);
+        if (outEdges.length === 0) {
+            errors.push(`Step Validation: Switch step '${stepName}' has no connected case branches.`);
+        }
+        outEdges.forEach(e => {
+            if (!e.caseValue && !e.label) {
+                errors.push(`Step Validation: Switch step '${stepName}' has an outgoing connection without a case value.`);
+            }
+        });
     }
   });
 

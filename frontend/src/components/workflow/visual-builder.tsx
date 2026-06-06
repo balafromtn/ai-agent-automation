@@ -16,7 +16,7 @@ import { apiUrl } from "@/lib/api";
 import { generateNodeId, generateEdgeId } from "@/utils/ids";
 import { duplicateNodesSafely } from "@/utils/graphValidation";
 import { Edge, applyNodeChanges, applyEdgeChanges } from "reactflow";
-import { X } from "lucide-react";
+import { X, AlertTriangle } from "lucide-react";
 import { usePerformanceMonitor } from "@/hooks/usePerformanceMonitor";
 
 type StepType =
@@ -151,11 +151,13 @@ function computeNodes(
   steps: any[],
   flowEdges: CustomEdge[],
   onDeleteNode: (id: string) => void,
+  invalidNodeIds: Set<string> = new Set()
 ): StepNode[] {
   if (!steps?.length) return [];
 
   return steps.map((step, index) => {
     const schema = buildNodePreview(step, flowEdges, steps);
+    const hasError = invalidNodeIds.has(step.id);
 
     return {
       id: step.id,
@@ -168,21 +170,25 @@ function computeNodes(
               <span className="font-semibold truncate flex items-center gap-2">
                 <span
                   className="w-2 h-2 rounded-full shrink-0"
-                  style={{ background: getNodeColor(step.type) }}
+                  style={{ background: hasError ? "#ef4444" : getNodeColor(step.type) }}
                 />
                 {step.name || "Untitled Step"}
               </span>
 
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onDeleteNode(step.id);
-                }}
-                className="text-red-500 hover:text-red-600 text-xs opacity-0 group-hover:opacity-100 transition"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-1">
+                {hasError && <AlertTriangle className="size-4 text-red-500" />} 
+
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDeleteNode(step.id);
+                  }}
+                  className="text-red-500 hover:text-red-600 text-xs opacity-0 group-hover:opacity-100 transition"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             <div className="text-xs text-muted-foreground mb-2">
@@ -208,7 +214,7 @@ function computeNodes(
 style: {
         padding: "12px 16px",
         borderRadius: "12px",
-        border: `1px solid ${getNodeColor(step.type)}`,
+        border: `1px solid ${hasError ? '#ef4444' : getNodeColor(step.type)}`,
         background: "var(--card)",
         color: "var(--foreground)",
         fontSize: "14px",
@@ -217,7 +223,9 @@ style: {
         minWidth: 240,
         maxWidth: 240,
         textAlign: "center" as const,
-        boxShadow: `0 0 0 1px ${getNodeColor(step.type)}20, 0 2px 6px rgba(0,0,0,0.05)`,
+        boxShadow: hasError 
+          ? `0 0 0 2px rgba(239,68,68,0.3), 0 2px 6px rgba(0,0,0,0.05)`
+          : `0 0 0 1px ${getNodeColor(step.type)}20, 0 2px 6px rgba(0,0,0,0.05)`,
         touchAction: "none", 
       },
     };
@@ -230,12 +238,14 @@ export default function VisualBuilder({
   edges,
   onEdgesChange,
   onSave,
+  validationErrors = [],
 }: {
   steps: any[];
   setSteps: React.Dispatch<React.SetStateAction<any[]>>;
   edges: any[];
   onEdgesChange: (edges: any[]) => void;
   onSave?: () => void;
+  validationErrors?: string[];
 }) {
   usePerformanceMonitor("VisualBuilder");
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
@@ -273,8 +283,24 @@ export default function VisualBuilder({
   const [computedNodes, setComputedNodes] = useState<Node[]>([]);
 
   useEffect(() => {
-    setComputedNodes(computeNodes(steps, flowEdges, deleteNode));
-  }, [steps, flowEdges, deleteNode]);
+    const invalidNodeIds = new Set<string>();
+    
+    validationErrors.forEach(err => {
+      const idMatch = err.match(/ID: ([^)]+)/);
+      if (idMatch && idMatch[1]) {
+        invalidNodeIds.add(idMatch[1]);
+      } else {
+        const nameMatch = err.match(/'([^']+)'/);
+        if (nameMatch && nameMatch[1]) {
+          const failingName = nameMatch[1];
+          const failingStep = steps.find(s => s.name === failingName || s.type === failingName);
+          if (failingStep) invalidNodeIds.add(failingStep.id);
+        }
+      }
+    });
+
+    setComputedNodes(computeNodes(steps, flowEdges, deleteNode, invalidNodeIds));
+  }, [steps, flowEdges, deleteNode, validationErrors]);
 
   const [nodes, setNodes, _onNodesChange] = useNodesState(computedNodes);
 
@@ -618,13 +644,18 @@ export default function VisualBuilder({
         if (!step) return node;
 
         const isSelected = selectedNode?.id === node.id;
+        const borderString = String(node.style?.border || "");
+        const isInvalid = borderString.includes('#ef4444') || borderString.includes('rgb(239, 68');
+        
+        const baseColor = isInvalid ? '#ef4444' : getNodeColor(step.type);
+
         const border = isSelected
-          ? "2px solid #3b82f6"
-          : `1px solid ${getNodeColor(step.type)}`;
+          ? `2px solid ${isInvalid ? '#dc2626' : '#3b82f6'}`
+          : `1px solid ${baseColor}`;
 
         const boxShadow = isSelected
-          ? "0 0 0 2px rgba(59,130,246,.35), 0 4px 12px rgba(0,0,0,.25)"
-          : `0 0 0 1px ${getNodeColor(step.type)}20, 0 2px 6px rgba(0,0,0,0.05)`;
+          ? `0 0 0 2px ${isInvalid ? 'rgba(220,38,38,.35)' : 'rgba(59,130,246,.35)'}, 0 4px 12px rgba(0,0,0,.25)`
+          : `0 0 0 1px ${baseColor}20, 0 2px 6px rgba(0,0,0,0.05)`;
 
         if (
           node.style?.border === border &&
