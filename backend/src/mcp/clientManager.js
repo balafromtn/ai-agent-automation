@@ -3,6 +3,7 @@ const { getResolvedMcpConfig } = require("./config");
 const { createStdioTransport } = require("./transports/stdio");
 const { createHttpTransport } = require("./transports/http");
 const { McpError, toMcpError } = require("./errors");
+const { version } = require("../../package.json");
 
 const clientCache = new Map();
 
@@ -57,7 +58,7 @@ async function createClient(server) {
 
   const client = new Client({
     name: "ai-agent-automation",
-    version: "0.8.0",
+    version: version || "unknown",
   });
 
   const transport = getTransport(server);
