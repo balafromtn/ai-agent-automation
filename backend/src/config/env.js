@@ -57,6 +57,12 @@ const envSchema = z.object({
     .positive("WORKER_MAX_ATTEMPTS must be a positive number")
     .optional(),
 
+  WORKER_CONCURRENCY_LIMIT: z.coerce
+    .number()
+    .int()
+    .positive("WORKER_CONCURRENCY_LIMIT must be a positive number")
+    .optional(),
+
   WORKER_SERVICE_TOKEN: z.string().optional(),
 
   // email
