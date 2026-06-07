@@ -66,7 +66,8 @@ function useDebounce<T>(value: T, delay = 300): T {
 
 const STATUS_OPTIONS = ["all", "idle", "running", "failed", "completed"];
 const SORT_OPTIONS = [
-  { value: "newest", label: "Newest first" },
+  { value: "newest", label: "Recently Created" }, // Renamed to match issue
+  { value: "updated", label: "Recently Updated" }, // Added new option
   { value: "oldest", label: "Oldest first" },
   { value: "alphabetical", label: "A → Z" },
 ];
@@ -84,6 +85,7 @@ interface Workflow {
   status: "idle" | "running" | "failed" | "completed";
   agentId?: string;
   createdAt?: string;
+  updatedAt?: string; // Added updatedAt
 }
 
 type Template = {
@@ -513,7 +515,15 @@ export default function WorkflowsPage() {
     }
 
     result.sort((a, b) => {
-      // Fallback to chronological mongoID if createdAt is missing
+      // 1. Handle "Recently Updated" sorting
+      if (sortBy === "updated") {
+        // Fallback: If updatedAt is missing, use createdAt. If both missing, use MongoID.
+        const updatedA = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : parseInt(a._id.substring(0, 8), 16));
+        const updatedB = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : parseInt(b._id.substring(0, 8), 16));
+        return updatedB - updatedA; // Sort descending (newest updates first)
+      }
+
+      // 2. Handle standard Created dates (newest/oldest)
       const dateA = a.createdAt ? new Date(a.createdAt).getTime() : parseInt(a._id.substring(0, 8), 16);
       const dateB = b.createdAt ? new Date(b.createdAt).getTime() : parseInt(b._id.substring(0, 8), 16);
 
