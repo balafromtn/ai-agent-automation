@@ -809,7 +809,7 @@ export default function WorkflowBuilderPage() {
                   </span>
                 )}
 
-                <Button variant="outline" onClick={handleExport}>
+                <Button variant="outline" onClick={handleExport} disabled={hasUnsavedChanges}>
                   <Download className="mr-2 size-4" />
                   Export JSON
                 </Button>
