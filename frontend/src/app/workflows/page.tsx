@@ -51,8 +51,6 @@ import {
   Plus,
   Pencil,
 } from "lucide-react";
-import Link from "next/link";
-import { FormEvent, memo, useCallback, useEffect, useState } from "react";
 
 // ─── Filter Utilities ──────────────────────────────────────────────
 function useDebounce<T>(value: T, delay = 300): T {
@@ -259,18 +257,6 @@ const WorkflowCard = memo(
               )}
             </div>
 
-          <DropdownMenuContent align="end">
-            <Link href={`/workflows/${workflow._id}/builder`}>
-              <DropdownMenuItem
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit(workflow);
-                }}
-              >
-                Edit Workflow Details
-              </DropdownMenuItem>
-            </Link>
-            <DropdownMenuItem
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -278,15 +264,15 @@ const WorkflowCard = memo(
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onEdit(workflow);
-                  }}
-                >
-                  Edit Workflow Details
-                </DropdownMenuItem>
+                <Link href={`/workflows/${workflow._id}/builder`}>
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                    }}
+                  >
+                    Edit Workflow Details
+                  </DropdownMenuItem>
+                </Link>
                 <DropdownMenuItem
                   className="text-destructive"
                   onClick={(e) => {

@@ -8,7 +8,6 @@ import { AuthGuard } from "@/components/auth/auth-guard";
 import { Activity, Workflow, ListChecks, Bot, Calendar } from "lucide-react";
 import { useAssistantContext } from "@/context/assistant-context";
 import { useApi } from "@/hooks/useApi";
-import { WorkflowList } from "@/components/workflow-list";
 
 /* -----------------------------
    Types
@@ -196,10 +195,24 @@ function DashboardPageInner() {
               <div className="lg:col-span-2">
                 <Card className="p-6">
                   <h2 className="mb-4 text-xl font-semibold">Your Workflows</h2>
-                  <WorkflowList
-                    workflows={workflowsArray}
-                    loading={workflowsLoading}
-                  />
+                    {workflowsLoading ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <ActivitySkeleton key={i} />
+                    ))
+                  ) : workflowsArray.length === 0 ? (
+                    <p className="text-sm text-muted-foreground opacity-70">No workflows yet</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {workflowsArray.slice(0, 5).map((wf: any) => (
+                        <div key={wf._id} className="flex items-center justify-between rounded-lg border border-border bg-card p-4 hover:bg-accent/50">
+                          <p className="font-medium">{wf.name}</p>
+                          <Badge className={wf.status === "running" ? "bg-success/20 text-success border-success/30" : "bg-muted text-muted-foreground"}>
+                            {wf.status}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </Card>
               </div>
 
