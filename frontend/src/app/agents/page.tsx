@@ -76,10 +76,11 @@ export default function AgentsPage() {
         Authorization: "Bearer " + localStorage.getItem("token"),
       },
     });
-    console.log("Response received");
-    
+   
     const data = await res.json();
-    console.log("Agent data:", data);
+    if (data.ok) {
+      setAgents(data.agents as Agent[]);
+    }
  } catch (err) {
   console.error("Error fetching agents:", err);
 } finally {
