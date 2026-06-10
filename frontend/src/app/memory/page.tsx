@@ -67,7 +67,6 @@ export default function MemoryPage() {
   const inspectorScrollRef = useRef<HTMLDivElement | null>(null);
 
   async function fetchMemories() {
-    setLoading(true);
     const url = apiUrl("/memory?search=") + encodeURIComponent(search);
     const res = await fetch(url, {
       headers: {
@@ -81,7 +80,11 @@ export default function MemoryPage() {
   }
 
   useEffect(() => {
-    fetchMemories();
+    const timeoutId = window.setTimeout(() => {
+      fetchMemories();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [search]);
 
   useEffect(() => {
@@ -182,7 +185,7 @@ export default function MemoryPage() {
                               </EmptyMedia>
                               <EmptyTitle>No memories found</EmptyTitle>
                               <EmptyDescription>
-                                Your filter parameter for "{search}" returned no historical semantic matches.
+                                Your filter parameter for &quot;{search}&quot; returned no historical semantic matches.
                               </EmptyDescription>
                             </EmptyHeader>
                             <EmptyContent>

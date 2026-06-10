@@ -1,15 +1,15 @@
 const router = require("express").Router();
 const authMiddleware = require("../middleware/auth.middleware");
 const { expensiveLimiter } = require("../middleware/rateLimit.middleware");
-const { createWorkflow, listWorkflows, getWorkflow, updateWorkflow, deleteWorkflow, addTaskToWorkflow, assignAgent, runWorkflowNow, updateWorkflowSteps } = require("../controllers/workflow.controller");
+const { createWorkflow, listWorkflows, getWorkflow, updateWorkflow, deleteWorkflow, addTaskToWorkflow, assignAgent, runWorkflowNow, updateWorkflowSteps, exportWorkflow } = require("../controllers/workflow.controller");
 
-// Require auth for all workflow routes
 router.use(authMiddleware);
 
 router.post("/", createWorkflow);
 router.get("/", listWorkflows);
 
 // IMPORTANT: specific routes FIRST
+router.get("/:workflowId/export", exportWorkflow);
 router.put("/:workflowId/steps", updateWorkflowSteps);
 router.post("/:workflowId/add-task", addTaskToWorkflow);
 router.put("/:workflowId/assign-agent", assignAgent);

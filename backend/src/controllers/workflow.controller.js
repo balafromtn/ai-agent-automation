@@ -257,5 +257,33 @@ async function updateWorkflowSteps(req, res) {
 }
 
 
+async function exportWorkflow(req, res) {
+  try {
+    const workflow = await Workflow.findById(req.params.workflowId);
+    if (!workflow) return res.status(404).json({ ok: false, error: "not_found" });
+    if (workflow.userId.toString() !== req.user._id.toString())
+      return res.status(403).json({ ok: false, error: "forbidden" });
 
-module.exports = { createWorkflow, listWorkflows, getWorkflow, updateWorkflow, deleteWorkflow, addTaskToWorkflow, assignAgent, runWorkflowNow, updateWorkflowSteps };
+    const exportData = {
+      id: workflow._id.toString(),
+      name: workflow.name,
+      description: workflow.description || "",
+      category: "",
+      icon: "",
+      tags: [],
+      agentId: workflow.agentId ? workflow.agentId.toString() : null,
+      steps: (workflow.metadata?.steps ?? []),
+      edges: (workflow.metadata?.edges ?? []),
+    };
+
+    res.setHeader("Content-Disposition", `attachment; filename="${workflow.name.replace(/\s+/g, "_")}.json"`);
+    res.setHeader("Content-Type", "application/json");
+    return res.json(exportData);
+  } catch (err) {
+    console.error("exportWorkflow error", err);
+    return res.status(500).json({ ok: false, error: "server_error" });
+  }
+}
+
+
+module.exports = { createWorkflow, listWorkflows, getWorkflow, updateWorkflow, deleteWorkflow, addTaskToWorkflow, assignAgent, runWorkflowNow, updateWorkflowSteps, exportWorkflow };

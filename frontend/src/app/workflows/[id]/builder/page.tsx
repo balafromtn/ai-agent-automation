@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import VisualBuilder from "@/components/workflow/visual-builder";
 import { Textarea } from "@/components/ui/textarea";
 import { useEffect } from "react";
-import { Save, Play, Plus, Trash2 } from "lucide-react";
+import { Save, Play, Plus, Trash2, AlertTriangle, Download } from "lucide-react";
 import { generateNodeId } from "@/utils/ids"; // ✅ Using centralized ID system
 import {
   Select,
@@ -34,6 +34,7 @@ type StepType =
   | "HTTP"
   | "Delay"
   | "Tool"
+  | "MCP"
   | "Document"
   | "Condition"
   | "Switch"
@@ -82,6 +83,12 @@ type WorkflowStep = {
   // Browser
   code?: string;
 
+  // MCP
+  serverId?: string;
+  toolName?: string;
+  arguments?: string;
+  timeoutMs?: number;
+
   // Document RAG
   documentId?: string;
   query?: string;
@@ -122,6 +129,7 @@ type BackendStep = {
     | "llm"
     | "http"
     | "delay"
+    | "mcp"
     | "condition"
     | "switch"
     | "document_query"
@@ -162,6 +170,8 @@ function getTypeColor(type: StepType) {
       return "bg-purple-500/20 text-purple-400 border-purple-500/30";
     case "Tool":
       return "bg-green-500/20 text-green-400 border-green-500/30";
+    case "MCP":
+      return "bg-teal-500/20 text-teal-400 border-teal-500/30";
     case "Document":
       return "bg-orange-500/20 text-orange-400 border-orange-500/30";
     default:
@@ -205,6 +215,9 @@ function summarizeStep(step: WorkflowStep) {
           }`
         : "No query configured";
 
+    case "MCP":
+      return `MCP → ${step.serverId || "no server"} / ${step.toolName || "no tool"}`;
+
     case "Tool": {
       if (!step.tool) return "Tool not selected";
       if (step.tool === "email") {
@@ -230,10 +243,41 @@ export default function WorkflowBuilderPage() {
   const [workflowName, setWorkflowName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState<any[]>([]);
+  const [mcpTools, setMcpTools] = useState<any[]>([]);
   const [builderMode, setBuilderMode] = useState<"list" | "visual">("list");
   const { addToast } = useToast();
   const [edges, setEdges] = useState<any[]>([]);
   const { setContext, clearContext } = useAssistantContext();
+  const [savedStepsSnapshot, setSavedStepsSnapshot] = useState<string>("[]");
+  const [savedEdgesSnapshot, setSavedEdgesSnapshot] = useState<string>("[]");
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [invalidNodeIds, setInvalidNodeIds] = useState<string[]>([]);
+
+  const hasUnsavedChanges = 
+    JSON.stringify(steps) !== savedStepsSnapshot || 
+    JSON.stringify(edges) !== savedEdgesSnapshot;
+
+  useEffect(() => {
+    if (steps.length === 0) {
+      setValidationErrors([]);
+      setInvalidNodeIds([]);
+      return;
+    }
+    const validation = validateGraphIntegrity(steps, edges);
+    setValidationErrors(validation.errors);
+    setInvalidNodeIds(validation.invalidNodeIds);
+  }, [steps, edges]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   async function fetchWorkflow() {
     try {
@@ -256,6 +300,7 @@ export default function WorkflowBuilderPage() {
         label: e.label || e.caseValue || e.condition?.toUpperCase() || "",
       }));
       setEdges(backendEdges);
+      setSavedEdgesSnapshot(JSON.stringify(backendEdges));
 
       const normalizedSteps: WorkflowStep[] = backendSteps.map((s) => ({
         id: s.stepId,
@@ -271,6 +316,8 @@ export default function WorkflowBuilderPage() {
                   ? "Switch"
                   : s.type === "document_query"
                     ? "Document"
+                    : s.type === "mcp"
+                      ? "MCP"
                     : s.type === "github"
                       ? "GitHub"
                       : s.type === "slack"
@@ -303,6 +350,13 @@ export default function WorkflowBuilderPage() {
         path: (s as any).path ?? "",
         content: (s as any).content ?? "",
         code: (s as any).code ?? "",
+        serverId: (s as any).serverId ?? "",
+        toolName: (s as any).toolName ?? "",
+        arguments:
+          typeof (s as any).arguments === "string"
+            ? (s as any).arguments
+            : JSON.stringify((s as any).arguments ?? {}, null, 2),
+        timeoutMs: (s as any).timeoutMs ?? 30000,
         documentId: (s as any).documentId ?? "",
         query: (s as any).query ?? "",
         topK: (s as any).topK ?? 4,
@@ -321,6 +375,7 @@ export default function WorkflowBuilderPage() {
       }));
 
       setSteps(normalizedSteps);
+      setSavedStepsSnapshot(JSON.stringify(normalizedSteps));
     } catch (err) {
       console.error("Failed to load workflow", err);
     } finally {
@@ -380,6 +435,26 @@ export default function WorkflowBuilderPage() {
     fetchDocs();
   }, []);
 
+  useEffect(() => {
+    async function fetchMcpTools() {
+      try {
+        const res = await fetch(apiUrl("/mcp/tools"), {
+          headers: {
+            Authorization: "Bearer " + localStorage.getItem("token"),
+          },
+        });
+        const data = await res.json();
+        if (data.ok) {
+          setMcpTools(data.tools || []);
+        }
+      } catch (err) {
+        console.error("Failed to fetch MCP tools", err);
+      }
+    }
+
+    fetchMcpTools();
+  }, []);
+
   function addStep() {
     setSteps((prev) => [
       ...prev,
@@ -421,7 +496,7 @@ export default function WorkflowBuilderPage() {
     });
   }
 
-  async function saveWorkflow() {
+    async function saveWorkflow(isDraft: boolean = false) {
     try {
       const enrichedSteps = enrichStepsWithEdges(steps, edges);
 
@@ -466,6 +541,28 @@ export default function WorkflowBuilderPage() {
             documentId: s.documentId,
             query: s.query,
             topK: s.topK ?? 4,
+          };
+        }
+        if (s.type === "MCP") {
+          let parsedArguments: any = {};
+
+          if ((s.arguments || "").trim()) {
+            try {
+              parsedArguments = JSON.parse(s.arguments || "{}");
+            } catch {
+              parsedArguments = s.arguments || "";
+            }
+          }
+
+          return {
+            stepId: s.id,
+            name: s.name,
+            position: s.position,
+            type: "mcp",
+            serverId: s.serverId ?? "",
+            toolName: s.toolName ?? "",
+            arguments: parsedArguments,
+            timeoutMs: s.timeoutMs ?? 30000,
           };
         }
         if (s.type === "Condition") {
@@ -563,7 +660,7 @@ export default function WorkflowBuilderPage() {
               content: s.content ?? "",
             };
           }
-        // fallback (should never hit)
+    // fallback (should never hit)
         return {
           stepId: s.id,
           name: s.name,
@@ -572,16 +669,15 @@ export default function WorkflowBuilderPage() {
         };
       });
 
-      // 🛡️ Final Graph Integrity Validation Check
       const validation = validateGraphIntegrity(enrichedSteps, edges);
-      if (!validation.isValid) {
+      if (!isDraft && !validation.isValid) {
         console.error("Save workflow blocked due to validation errors:", validation.errors);
         addToast({
           type: "error",
           title: "Failed to Save Workflow",
           description: validation.errors[0] || "Your workflow contains orphaned edges or invalid connections. Please resolve them before saving.",
         });
-        return; // Halt execution entirely
+        return;
       }
 
       // 🚀 Topology is verified clean - proceed with secure API request
@@ -604,6 +700,8 @@ export default function WorkflowBuilderPage() {
         title: "Workflow saved",
         description: "Your workflow steps were updated successfully",
       });
+      setSavedStepsSnapshot(JSON.stringify(steps));
+      setSavedEdgesSnapshot(JSON.stringify(edges));
     } catch (err) {
       console.error("Save workflow failed:", err);
       addToast({
@@ -622,6 +720,31 @@ export default function WorkflowBuilderPage() {
     setSteps((prev) =>
       prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)),
     );
+  }
+
+  async function handleExport() {
+    try {
+      const res = await fetch(apiUrl(`/workflows/${id}/export`), {
+        headers: {
+          Authorization: "Bearer " + localStorage.getItem("token"),
+        },
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${workflowName?.replace(/\s+/g, "_") ?? id}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Export failed:", err);
+      addToast({
+        type: "error",
+        title: "Export failed",
+        description: "Could not export workflow. Try again.",
+      });
+    }
   }
 
   if (loading) {
@@ -675,24 +798,67 @@ export default function WorkflowBuilderPage() {
               </div>
 
               <div className="flex items-center gap-3">
+                {/*Visual Indicator */}
+                {hasUnsavedChanges && (
+                  <span className="text-sm font-medium text-amber-500 flex items-center gap-2 mr-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                    </span>
+                    Unsaved Changes
+                  </span>
+                )}
+
+                <Button variant="outline" onClick={handleExport} disabled={hasUnsavedChanges}>
+                  <Download className="mr-2 size-4" />
+                  Export JSON
+                </Button>
                 <Button
                   variant="outline"
-                  onClick={() => router.push(`/workflows/${id}`)}
+                  onClick={() => {
+                    if (hasUnsavedChanges) {
+                      if (window.confirm("You have unsaved changes. Are you sure you want to leave without saving?")) {
+                        router.push(`/workflows/${id}`);
+                      }
+                    } else {
+                      router.push(`/workflows/${id}`);
+                    }
+                  }}
                 >
                   ← Back to Workflow
                 </Button>
-                <Button variant="outline">
+                <Button variant="outline" onClick={() => saveWorkflow(true)} disabled={!hasUnsavedChanges}>
                   <Save className="mr-2 size-4" />
                   Save Draft
                 </Button>
-                <Button onClick={saveWorkflow}>
+                <Button onClick={() => saveWorkflow(false)} disabled={!hasUnsavedChanges || validationErrors.length > 0}>
                   <Play className="mr-2 size-4" />
                   Save Changes
                 </Button>
               </div>
             </div>
 
-            {/* Render Canvas vs List view toggles */}
+            {validationErrors.length > 0 && (
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }} 
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-8 rounded-lg border border-destructive/50 bg-destructive/10 p-5 text-destructive"
+              >
+                <h3 className="mb-3 flex items-center gap-2 font-semibold">
+                  <AlertTriangle className="size-5" />
+                  Workflow Validation Errors ({validationErrors.length})
+                </h3>
+                <ul className="ml-6 list-disc space-y-1.5 text-sm">
+                  {validationErrors.map((err, i) => (
+                    <li key={i}>{err}</li>
+                  ))}
+                </ul>
+                <p className="mt-4 text-xs font-medium opacity-80">
+                  You must resolve these errors before the workflow can be executed.
+                </p>
+              </motion.div>
+            )}
+
             {builderMode === "visual" && (
               <VisualBuilder
                 steps={steps}
@@ -701,6 +867,8 @@ export default function WorkflowBuilderPage() {
                 onEdgesChange={(updatedEdges) => {
                   setEdges(updatedEdges);
                 }}
+                onSave={saveWorkflow}
+                invalidNodeIds={invalidNodeIds}
               />
             )}
 
@@ -799,6 +967,7 @@ export default function WorkflowBuilderPage() {
                                 <SelectItem value="HTTP">HTTP Request</SelectItem>
                                 <SelectItem value="Delay">Delay</SelectItem>
                                 <SelectItem value="Tool">Tool</SelectItem>
+                                <SelectItem value="MCP">MCP</SelectItem>
                                 <SelectItem value="Document">Document Query</SelectItem>
                                 <SelectItem value="Condition">Condition</SelectItem>
                                 <SelectItem value="Switch">Switch</SelectItem>
@@ -1075,6 +1244,111 @@ export default function WorkflowBuilderPage() {
                                       body: e.target.value,
                                     })
                                   }
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          {step.type === "MCP" && (
+                            <>
+                              <div className="rounded-lg border border-muted p-3 text-xs text-muted-foreground">
+                                MCP tools come from the servers configured on the
+                                Settings page.
+                              </div>
+                              <div>
+                                <Label>Server</Label>
+                                <Select
+                                  value={step.serverId}
+                                  onValueChange={(v) =>
+                                    updateStep(step.id, {
+                                      serverId: v,
+                                      toolName: "",
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger className="mt-1.5">
+                                    <SelectValue placeholder="Select server" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {Array.from(
+                                      new Map(
+                                        mcpTools.map((tool) => [
+                                          tool.serverId,
+                                          tool.serverName || tool.serverId,
+                                        ]),
+                                      ).entries(),
+                                    ).map(([serverId, serverName]) => (
+                                      <SelectItem key={serverId} value={serverId}>
+                                        {serverName}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label>Tool</Label>
+                                <Select
+                                  value={step.toolName}
+                                  onValueChange={(v) =>
+                                    updateStep(step.id, { toolName: v })
+                                  }
+                                >
+                                  <SelectTrigger className="mt-1.5">
+                                    <SelectValue placeholder="Select tool" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {mcpTools
+                                      .filter(
+                                        (tool) => tool.serverId === step.serverId,
+                                      )
+                                      .map((tool) => (
+                                        <SelectItem key={tool.id} value={tool.name}>
+                                          {tool.name}
+                                        </SelectItem>
+                                      ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label>Arguments (JSON)</Label>
+                                <Textarea
+                                  className="mt-1.5 min-h-[120px] font-mono text-sm"
+                                  value={step.arguments ?? "{\n  \n}"}
+                                  onChange={(e) =>
+                                    updateStep(step.id, {
+                                      arguments: e.target.value,
+                                    })
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <Label>Timeout (ms)</Label>
+                                <Input
+                                  className="mt-1.5"
+                                  type="number"
+                                  value={step.timeoutMs ?? 30000}
+                                  onChange={(e) =>
+                                    updateStep(step.id, {
+                                      timeoutMs: Number(e.target.value),
+                                    })
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <Label>Input Schema</Label>
+                                <Textarea
+                                  className="mt-1.5 min-h-[140px] font-mono text-xs"
+                                  readOnly
+                                  value={JSON.stringify(
+                                    mcpTools.find(
+                                      (tool) =>
+                                        tool.serverId === step.serverId &&
+                                        tool.name === step.toolName,
+                                    )?.inputSchema ??
+                                      "Select an MCP tool to inspect its schema.",
+                                    null,
+                                    2,
+                                  )}
                                 />
                               </div>
                             </>
