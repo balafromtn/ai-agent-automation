@@ -916,7 +916,7 @@ function DeleteWorkflowModal({
         <DialogHeader>
           <DialogTitle>Delete Workflow</DialogTitle>
           <DialogDescription className="text-foreground mt-4">
-            Are you sure you want to delete workflow <strong>"{workflow?.name}"</strong>? This action cannot be undone.
+            Are you sure you want to delete workflow <strong>&quot;{workflow?.name}&quot;</strong>? This action cannot be undone.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

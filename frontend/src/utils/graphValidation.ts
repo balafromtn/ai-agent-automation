@@ -1,5 +1,44 @@
-import { generateNodeId, generateEdgeId } from '@/utils/ids';
-import { WorkflowNode, WorkflowEdge, ValidationResult } from '@/types/workflow';
+import { generateNodeId, generateEdgeId } from './ids.ts';
+import type { WorkflowNode, WorkflowEdge, ValidationResult } from '../types/workflow.ts';
+
+/**
+ * Normalizes any step type variation (uppercase, lowercase, mixed-case, tool aliases)
+ * to a canonical StepType.
+ */
+export const normalizeStepType = (type?: string): string => {
+  if (!type) return "LLM";
+  const lower = type.toLowerCase();
+  switch (lower) {
+    case "llm":
+      return "LLM";
+    case "http":
+      return "HTTP";
+    case "delay":
+      return "Delay";
+    case "condition":
+      return "Condition";
+    case "switch":
+      return "Switch";
+    case "mcp":
+      return "MCP";
+    case "document":
+    case "document_query":
+      return "Document";
+    case "tool":
+    case "file":
+    case "email":
+    case "browser":
+      return "Tool";
+    case "github":
+      return "GitHub";
+    case "slack":
+      return "Slack";
+    case "discord":
+      return "Discord";
+    default:
+      return type.charAt(0).toUpperCase() + type.slice(1);
+  }
+};
 
 /**
  * Deep clones an array of workflow nodes and ensures every node 
@@ -166,35 +205,37 @@ export const validateGraph = (
 
   (nodes || []).forEach((node) => {
     const stepName = node.name || node.type;
+    const normalizedType = normalizeStepType(node.type);
 
-    if (node.type === "LLM") {
+    if (normalizedType === "LLM") {
       if (!node.prompt || node.prompt.trim() === "") {
         errors.push(`Step Validation: LLM step '${stepName}' is missing a required prompt.`);
         invalidNodes.add(node.id);
       }
     }
 
-    if (node.type === "Tool") {
-      if (!node.tool) {
+    if (normalizedType === "Tool") {
+      const toolVal = node.tool || (["file", "email", "browser"].includes(node.type?.toLowerCase()) ? node.type.toLowerCase() : undefined);
+      if (!toolVal) {
         errors.push(`Step Validation: Tool step '${stepName}' has no tool type selected.`);
         invalidNodes.add(node.id);
       } else {
-         if (node.tool === "email" && (!node.to || node.to.trim() === "")) {
+         if (toolVal === "email" && (!node.to || node.to.trim() === "")) {
              errors.push(`Step Validation: Email tool '${stepName}' is missing a recipient address.`);
              invalidNodes.add(node.id);
          }
-         if (node.tool === "file" && (!node.path || node.path.trim() === "")) {
+         if (toolVal === "file" && (!node.path || node.path.trim() === "")) {
              errors.push(`Step Validation: File tool '${stepName}' is missing a file path.`);
              invalidNodes.add(node.id);
          }
-         if (node.tool === "browser" && node.action !== 'evaluate' && (!node.url || node.url.trim() === "")) {
+         if (toolVal === "browser" && node.action !== 'evaluate' && (!node.url || node.url.trim() === "")) {
              errors.push(`Step Validation: Browser tool '${stepName}' is missing a target URL.`);
              invalidNodes.add(node.id);
          }
       }
     }
 
-    if (node.type === "Condition") {
+    if (normalizedType === "Condition") {
         const outEdges = (edges || []).filter(e => e.source === node.id);
         const hasTrue = outEdges.some(e => e.condition === "true" || e.label?.toLowerCase() === "true");
         const hasFalse = outEdges.some(e => e.condition === "false" || e.label?.toLowerCase() === "false");
@@ -205,7 +246,7 @@ export const validateGraph = (
         }
     }
 
-    if (node.type === "Switch") {
+    if (normalizedType === "Switch") {
         const outEdges = (edges || []).filter(e => e.source === node.id);
         if (outEdges.length === 0) {
             errors.push(`Step Validation: Switch step '${stepName}' has no connected case branches.`);
