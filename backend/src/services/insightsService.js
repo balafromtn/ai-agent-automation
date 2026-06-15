@@ -1,5 +1,5 @@
 // backend/src/services/insightsService.js
-const Task = require("../models/task.model");
+const Task = require('../models/task.model');
 
 const DEFAULT_LIMIT = 200;
 
@@ -19,24 +19,24 @@ function getStepId(step) {
 }
 
 function normalizeBranchLabel(label, stepType) {
-  if (label == null || label === "") {
-    return stepType === "switch" ? "default" : "unknown";
+  if (label === null || label === undefined || label === '') {
+    return stepType === 'switch' ? 'default' : 'unknown';
   }
   const value = String(label);
-  return stepType === "switch" ? value.toLowerCase().trim() : value;
+  return stepType === 'switch' ? value.toLowerCase().trim() : value;
 }
 
 function getBranchLabelFromEdge(edge, stepType) {
-  if (stepType === "condition") {
+  if (stepType === 'condition') {
     return normalizeBranchLabel(edge.condition, stepType);
   }
-  if (stepType === "switch") {
-    if (edge.caseValue != null && edge.caseValue !== "") {
+  if (stepType === 'switch') {
+    if (edge.caseValue !== null && edge.caseValue !== undefined && edge.caseValue !== '') {
       return normalizeBranchLabel(edge.caseValue, stepType);
     }
-    return "default";
+    return 'default';
   }
-  return "unknown";
+  return 'unknown';
 }
 
 function getPossibleBranches(stepId, stepType, edges = []) {
@@ -47,14 +47,20 @@ function getPossibleBranches(stepId, stepType, edges = []) {
 
 function extractBranchOutcome(stepResult) {
   if (!stepResult) return null;
-  if (stepResult.type === "condition") {
-    return stepResult.branch != null ? String(stepResult.branch) : null;
+  if (stepResult.type === 'condition') {
+    return stepResult.branch !== null && stepResult.branch !== undefined
+      ? String(stepResult.branch)
+      : null;
   }
-  if (stepResult.type === "switch") {
-    if (stepResult.caseValue != null && stepResult.caseValue !== "") {
-      return normalizeBranchLabel(stepResult.caseValue, "switch");
+  if (stepResult.type === 'switch') {
+    if (
+      stepResult.caseValue !== null &&
+      stepResult.caseValue !== undefined &&
+      stepResult.caseValue !== ''
+    ) {
+      return normalizeBranchLabel(stepResult.caseValue, 'switch');
     }
-    return "default";
+    return 'default';
   }
   return null;
 }
@@ -62,15 +68,12 @@ function extractBranchOutcome(stepResult) {
 // ─── 1. Workflow-level success & duration ───────────────────────────────────
 
 async function getWorkflowRunStats(workflowId, userId, limit = DEFAULT_LIMIT) {
-  const tasks = await Task.find({ workflowId, userId })
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .lean();
+  const tasks = await Task.find({ workflowId, userId }).sort({ createdAt: -1 }).limit(limit).lean();
 
   if (tasks.length === 0) return null;
 
-  const completed = tasks.filter((t) => t.status === "completed");
-  const failed = tasks.filter((t) => t.status === "failed");
+  const completed = tasks.filter((t) => t.status === 'completed');
+  const failed = tasks.filter((t) => t.status === 'failed');
   const successRate = tasks.length > 0 ? (completed.length / tasks.length) * 100 : 0;
 
   const durations = tasks
@@ -95,7 +98,7 @@ function computeStepStats(tasks) {
 
   for (const task of tasks) {
     for (const sr of task.stepResults || []) {
-      const key = sr.stepId || sr.type || "unknown";
+      const key = sr.stepId || sr.type || 'unknown';
       if (!stepMap[key]) {
         stepMap[key] = {
           stepId: key,
@@ -116,7 +119,7 @@ function computeStepStats(tasks) {
       } else {
         s.successes++;
       }
-      if (typeof sr.durationMs === "number") s.durations.push(sr.durationMs);
+      if (typeof sr.durationMs === 'number') s.durations.push(sr.durationMs);
     }
   }
 
@@ -134,7 +137,7 @@ function computeStepStats(tasks) {
 // ─── 3. Branch routing skew analysis ────────────────────────────────────────
 
 function ensureBranchEntry(branchMap, stepId, stepType, edges = []) {
-  if (!stepId || !["condition", "switch"].includes(stepType)) return;
+  if (!stepId || !['condition', 'switch'].includes(stepType)) return;
 
   if (!branchMap[stepId]) {
     const outcomes = {};
@@ -156,7 +159,7 @@ function computeBranchRouting(tasks, workflowSteps = [], workflowEdges = []) {
   const branchMap = {};
 
   for (const step of workflowSteps) {
-    if (!["condition", "switch"].includes(step.type)) continue;
+    if (!['condition', 'switch'].includes(step.type)) continue;
     ensureBranchEntry(branchMap, getStepId(step), step.type, workflowEdges);
   }
 
@@ -165,15 +168,16 @@ function computeBranchRouting(tasks, workflowSteps = [], workflowEdges = []) {
       Array.isArray(task.metadata?.edges) && task.metadata.edges.length > 0
         ? task.metadata.edges
         : workflowEdges;
-    const taskSteps = Array.isArray(task.steps) && task.steps.length > 0 ? task.steps : workflowSteps;
+    const taskSteps =
+      Array.isArray(task.steps) && task.steps.length > 0 ? task.steps : workflowSteps;
 
     for (const step of taskSteps) {
-      if (!["condition", "switch"].includes(step.type)) continue;
+      if (!['condition', 'switch'].includes(step.type)) continue;
       ensureBranchEntry(branchMap, getStepId(step), step.type, taskEdges);
     }
 
     for (const stepResult of task.stepResults || []) {
-      if (!["condition", "switch"].includes(stepResult.type)) continue;
+      if (!['condition', 'switch'].includes(stepResult.type)) continue;
 
       const stepId = stepResult.stepId;
       if (!stepId) continue;
@@ -183,7 +187,7 @@ function computeBranchRouting(tasks, workflowSteps = [], workflowEdges = []) {
       ensureBranchEntry(branchMap, stepId, stepType, taskEdges);
 
       const outcome = extractBranchOutcome(stepResult);
-      if (outcome == null) continue;
+      if (outcome === null || outcome === undefined) continue;
 
       if (!(outcome in branchMap[stepId].outcomes)) {
         branchMap[stepId].outcomes[outcome] = 0;
@@ -231,10 +235,10 @@ function computeSemanticMetrics(tasks) {
       const m = sr.metrics;
       if (!m) continue;
 
-      if (m.useMemory && typeof m.averageSimilarity === "number") {
+      if (m.useMemory && typeof m.averageSimilarity === 'number') {
         memoryScores.push(m.averageSimilarity);
       }
-      if (typeof m.topK === "number" && typeof m.averageSimilarity === "number") {
+      if (typeof m.topK === 'number' && typeof m.averageSimilarity === 'number') {
         ragScores.push(m.averageSimilarity);
       }
     }
@@ -284,10 +288,7 @@ function computeHealthScore({ runStats, stepStats, branchRouting, semanticMetric
   const relevanceScore = Math.max(0, 100 - memPenalty - ragPenalty);
 
   const composite =
-    reliability * 0.35 +
-    stepStability * 0.25 +
-    branchScore * 0.2 +
-    relevanceScore * 0.2;
+    reliability * 0.35 + stepStability * 0.25 + branchScore * 0.2 + relevanceScore * 0.2;
 
   return parseFloat(clamp(composite).toFixed(1));
 }
@@ -300,8 +301,8 @@ function buildRecommendations({ runStats, stepStats, branchRouting, semanticMetr
   // Low success rate
   if (runStats && runStats.successRate < 80) {
     recs.push({
-      type: "reliability",
-      severity: runStats.successRate < 50 ? "critical" : "warning",
+      type: 'reliability',
+      severity: runStats.successRate < 50 ? 'critical' : 'warning',
       message: `Workflow success rate is ${runStats.successRate.toFixed(1)}%. Investigate frequently failing steps and add retry logic or fallback handlers.`,
     });
   }
@@ -310,15 +311,15 @@ function buildRecommendations({ runStats, stepStats, branchRouting, semanticMetr
   for (const s of stepStats) {
     if (s.successRate < 70 && s.executions >= 3) {
       recs.push({
-        type: "step_stability",
-        severity: "warning",
-        message: `Step "${s.stepId}" (${s.type}) has a ${s.successRate}% success rate over ${s.executions} executions. Common errors: ${s.commonErrors.join("; ") || "N/A"}.`,
+        type: 'step_stability',
+        severity: 'warning',
+        message: `Step "${s.stepId}" (${s.type}) has a ${s.successRate}% success rate over ${s.executions} executions. Common errors: ${s.commonErrors.join('; ') || 'N/A'}.`,
       });
     }
     if (s.avgDurationMs > 10000 && s.executions >= 3) {
       recs.push({
-        type: "step_performance",
-        severity: "notice",
+        type: 'step_performance',
+        severity: 'notice',
         message: `Step "${s.stepId}" averages ${(s.avgDurationMs / 1000).toFixed(1)}s. Consider caching outputs or parallelising upstream steps.`,
       });
     }
@@ -328,16 +329,16 @@ function buildRecommendations({ runStats, stepStats, branchRouting, semanticMetr
   for (const b of branchRouting) {
     if (b.isSkewed) {
       recs.push({
-        type: "branch_routing",
-        severity: "notice",
+        type: 'branch_routing',
+        severity: 'notice',
         message: `Branch "${b.stepId}" is heavily skewed (≥90% of executions take one path). Review condition logic — the alternative branches may be unreachable.`,
       });
     }
     if (b.deadBranches.length > 0) {
       recs.push({
-        type: "dead_branch",
-        severity: "warning",
-        message: `Branch "${b.stepId}" has never-taken outcome(s): ${b.deadBranches.join(", ")}. These are dead code — remove or fix routing conditions.`,
+        type: 'dead_branch',
+        severity: 'warning',
+        message: `Branch "${b.stepId}" has never-taken outcome(s): ${b.deadBranches.join(', ')}. These are dead code — remove or fix routing conditions.`,
       });
     }
   }
@@ -345,8 +346,8 @@ function buildRecommendations({ runStats, stepStats, branchRouting, semanticMetr
   // Low RAG relevance
   if (semanticMetrics.rag.lowRelevance) {
     recs.push({
-      type: "rag_relevance",
-      severity: "warning",
+      type: 'rag_relevance',
+      severity: 'warning',
       message: `Average RAG similarity is ${semanticMetrics.rag.avgSimilarity.toFixed(3)} (threshold 0.35). Increase Top-K, improve document chunking strategy, or refine query prompts.`,
     });
   }
@@ -354,8 +355,8 @@ function buildRecommendations({ runStats, stepStats, branchRouting, semanticMetr
   // Low memory relevance
   if (semanticMetrics.memory.lowRelevance) {
     recs.push({
-      type: "memory_relevance",
-      severity: "warning",
+      type: 'memory_relevance',
+      severity: 'warning',
       message: `Average memory retrieval similarity is ${semanticMetrics.memory.avgSimilarity.toFixed(3)} (threshold 0.35). Consider pruning stale memories or tuning the embedding model.`,
     });
   }
@@ -370,14 +371,16 @@ function buildRecommendations({ runStats, stepStats, branchRouting, semanticMetr
  * @param {string} workflowId - MongoDB ObjectId string
  * @param {number} [limit=200]  - max runs to analyse
  */
-async function getWorkflowInsights(workflowId, userId, limit = DEFAULT_LIMIT, workflowDefinition = {}) {
-  const tasks = await Task.find({ workflowId, userId })
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .lean();
+async function getWorkflowInsights(
+  workflowId,
+  userId,
+  limit = DEFAULT_LIMIT,
+  workflowDefinition = {}
+) {
+  const tasks = await Task.find({ workflowId, userId }).sort({ createdAt: -1 }).limit(limit).lean();
 
   if (tasks.length === 0) {
-    return { workflowId, message: "No execution history found.", healthScore: null };
+    return { workflowId, message: 'No execution history found.', healthScore: null };
   }
 
   const workflowSteps = workflowDefinition.steps || [];
@@ -388,7 +391,12 @@ async function getWorkflowInsights(workflowId, userId, limit = DEFAULT_LIMIT, wo
   const branchRouting = computeBranchRouting(tasks, workflowSteps, workflowEdges);
   const semanticMetrics = computeSemanticMetrics(tasks);
   const healthScore = computeHealthScore({ runStats, stepStats, branchRouting, semanticMetrics });
-  const recommendations = buildRecommendations({ runStats, stepStats, branchRouting, semanticMetrics });
+  const recommendations = buildRecommendations({
+    runStats,
+    stepStats,
+    branchRouting,
+    semanticMetrics,
+  });
 
   return {
     workflowId,
@@ -408,24 +416,21 @@ async function getWorkflowInsights(workflowId, userId, limit = DEFAULT_LIMIT, wo
  * @param {number} [limit=200]
  */
 async function getGlobalInsights(userId, limit = DEFAULT_LIMIT) {
-  const tasks = await Task.find({ userId })
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .lean();
+  const tasks = await Task.find({ userId }).sort({ createdAt: -1 }).limit(limit).lean();
 
   if (tasks.length === 0) {
-    return { userId, message: "No execution history found.", healthScore: null };
+    return { userId, message: 'No execution history found.', healthScore: null };
   }
 
   // Group by workflowId
   const byWorkflow = {};
   for (const t of tasks) {
-    const wid = t.workflowId ? t.workflowId.toString() : "standalone";
+    const wid = t.workflowId ? t.workflowId.toString() : 'standalone';
     (byWorkflow[wid] = byWorkflow[wid] || []).push(t);
   }
 
   const workflowSummaries = Object.entries(byWorkflow).map(([wid, wTasks]) => {
-    const completed = wTasks.filter((t) => t.status === "completed").length;
+    const completed = wTasks.filter((t) => t.status === 'completed').length;
     const successRate = parseFloat(((completed / wTasks.length) * 100).toFixed(2));
     const durations = wTasks
       .filter((t) => t.startedAt && t.completedAt)
@@ -447,7 +452,12 @@ async function getGlobalInsights(userId, limit = DEFAULT_LIMIT) {
   const semanticMetrics = computeSemanticMetrics(tasks);
   const runStats = { successRate: overallSuccessRate };
   const healthScore = computeHealthScore({ runStats, stepStats, branchRouting, semanticMetrics });
-  const recommendations = buildRecommendations({ runStats, stepStats, branchRouting, semanticMetrics });
+  const recommendations = buildRecommendations({
+    runStats,
+    stepStats,
+    branchRouting,
+    semanticMetrics,
+  });
 
   return {
     userId,

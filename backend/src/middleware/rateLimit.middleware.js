@@ -19,10 +19,10 @@ const limitHandler = (req, res, next, options) => {
   });
 };
 
+// 1. Global Limiter (applied globally to all /api routes)
 const globalLimiter = rateLimit({
   windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 900000, // 15 mins default
-  max: Number(process.env.RATE_LIMIT_GLOBAL_MAX) || 5000,
-  skip: (req) => (req.originalUrl.includes("/tasks") || req.originalUrl.includes("/logs")) && req.method === "GET",
+  max: Number(process.env.RATE_LIMIT_GLOBAL_MAX) || 100,
   message: "Too many requests. Please try again later.",
   handler: limitHandler,
   standardHeaders: true,

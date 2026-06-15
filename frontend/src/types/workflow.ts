@@ -10,6 +10,7 @@ export type StepType =
   | "Condition"
   | "Switch"
   | "GitHub"
+  | "Slack"
   | "Discord"
   | "Approval";
 
@@ -88,6 +89,7 @@ export interface WorkflowNode {
 
   // Approval
   approvalMessage?: string;
+  message?: string;
 }
 
 export interface BackendStep {

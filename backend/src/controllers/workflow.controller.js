@@ -295,5 +295,30 @@ async function exportWorkflow(req, res) {
   }
 }
 
+async function cloneWorkflow(req, res) {
+  try {
+    const originalWorkflow = await Workflow.findById(req.params.id);
+    if (!originalWorkflow) return res.status(404).json({ ok: false, error: "not_found" });
 
-module.exports = { createWorkflow, listWorkflows, getWorkflow, updateWorkflow, deleteWorkflow, addTaskToWorkflow, assignAgent, runWorkflowNow, updateWorkflowSteps, exportWorkflow };
+    if (originalWorkflow.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
+
+    const clonedMetadata = JSON.parse(JSON.stringify(originalWorkflow.metadata || { steps: [], edges: [] }));
+    const clonedWorkflow = await Workflow.create({
+      name: `${originalWorkflow.name} (Copy)`,
+      description: originalWorkflow.description,
+      userId: req.user._id,
+      agentId: originalWorkflow.agentId || null,
+      metadata: normalizeWorkflowMetadata(clonedMetadata),
+    });
+    await workflowVersionService.createVersionIfNeeded(clonedWorkflow, req.user._id, "Cloned from original");
+
+    res.status(201).json({ ok: true, workflow: clonedWorkflow });
+  } catch (err) {
+    console.error("cloneWorkflow error", err);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+}
+
+module.exports = { createWorkflow, listWorkflows, getWorkflow, updateWorkflow, deleteWorkflow, addTaskToWorkflow, assignAgent, runWorkflowNow, updateWorkflowSteps, exportWorkflow, cloneWorkflow };
