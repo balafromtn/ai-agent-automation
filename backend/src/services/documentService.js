@@ -35,6 +35,8 @@ function cosineSimilarity(vecA, vecB) {
         normB += vecB[i] * vecB[i];
     }
 
+    if (!normA || !normB) return 0;
+
     return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
@@ -74,6 +76,11 @@ async function queryDocument(agent, userId, documentId, query, topK = 3) {
 
 async function queryDocuments(agent, userId, documentIds, query, topK = 3) {
 
+    const parsedTopK = Number(topK);
+    const limit = Number.isFinite(parsedTopK)
+        ? Math.max(0, Math.floor(parsedTopK))
+        : 3;
+
     const uniqueDocumentIds = [...new Map(
         (Array.isArray(documentIds) ? documentIds : [])
             .filter(Boolean)
@@ -109,7 +116,7 @@ async function queryDocuments(agent, userId, documentIds, query, topK = 3) {
     scored.sort((a, b) => b.score - a.score);
 
     // Return topK results
-    return scored.slice(0, topK);
+    return scored.slice(0, limit);
 }
 
 module.exports = {

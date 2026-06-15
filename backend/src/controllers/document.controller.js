@@ -10,6 +10,8 @@ const { processDocument, queryDocuments } = require("../services/documentService
 const { runLLM } = require("../agents/llmAdapter");
 
 const upload = multer({ storage: multer.memoryStorage() });
+const MAX_SELECTED_DOCUMENTS = 10;
+const MAX_RAG_CONTEXT_CHARS = 12000;
 
 /* -----------------------------
    Upload Document
@@ -171,7 +173,7 @@ async function chatWithDocument(req, res) {
       });
     }
 
-    if (selectedDocumentIds.length > 10) {
+    if (selectedDocumentIds.length > MAX_SELECTED_DOCUMENTS) {
       return res.status(400).json({
         ok: false,
         error: "too_many_documents",
@@ -264,14 +266,47 @@ async function chatWithDocument(req, res) {
       };
     });
 
-    const context = enrichedChunks.map((chunk) => {
-      return `[${chunk.title}]
+    const contextBlocks = [];
+    const includedChunks = [];
+    let contextLength = 0;
+
+    for (const chunk of enrichedChunks) {
+      const separator = contextBlocks.length ? "\n\n---\n\n" : "";
+      const header = `[${chunk.title}]
 Chunk ${chunk.chunkIndex}
-${chunk.content}`;
-    }).join("\n\n---\n\n");
+`;
+      let content = chunk.content || "";
+      let block = `${header}${content}`;
+      let nextLength = contextLength + separator.length + block.length;
+
+      if (nextLength > MAX_RAG_CONTEXT_CHARS) {
+        if (contextBlocks.length > 0) {
+          break;
+        }
+
+        // If the top chunk alone is too large, include a truncated version within the context budget.
+        const availableContentLength = Math.max(
+          MAX_RAG_CONTEXT_CHARS - separator.length - header.length,
+          0
+        );
+
+        content = content.slice(0, availableContentLength).trim();
+        block = `${header}${content}`;
+        nextLength = contextLength + separator.length + block.length;
+      }
+
+      contextBlocks.push(`${separator}${block}`);
+      includedChunks.push({
+        ...chunk,
+        content
+      });
+      contextLength = nextLength;
+    }
+
+    const context = contextBlocks.join("");
 
     const seenSources = new Set();
-    const sources = enrichedChunks
+    const sources = includedChunks
       .filter((chunk) => {
         const sourceKey = `${chunk.documentId}:${chunk.chunkIndex}`;
 
