@@ -211,6 +211,12 @@ async function chatWithDocument(req, res) {
     }
 
     const trimmedQuestion = question.trim();
+    const documentTitleById = new Map(
+      documents.map((document) => [
+        document._id.toString(),
+        document.title || document.name || "Untitled document"
+      ])
+    );
 
     /* ---------- Load user settings ---------- */
 
@@ -237,10 +243,64 @@ async function chatWithDocument(req, res) {
       topK
     );
 
-    const context = chunks.map((c) => c.content).join("\n\n");
+    if (!chunks.length) {
+      return res.json({
+        ok: true,
+        answer: "I could not find relevant information in the selected document(s).",
+        sources: [],
+        documentIds: selectedDocumentIds
+      });
+    }
+
+    const enrichedChunks = chunks.map((chunk) => {
+      const chunkDocumentId = chunk.documentId.toString();
+
+      return {
+        documentId: chunkDocumentId,
+        title: documentTitleById.get(chunkDocumentId) || "Untitled document",
+        chunkIndex: chunk.chunkIndex,
+        score: chunk.score,
+        content: chunk.content
+      };
+    });
+
+    const context = enrichedChunks.map((chunk) => {
+      return `[${chunk.title}]
+Chunk ${chunk.chunkIndex}
+${chunk.content}`;
+    }).join("\n\n---\n\n");
+
+    const seenSources = new Set();
+    const sources = enrichedChunks
+      .filter((chunk) => {
+        const sourceKey = `${chunk.documentId}:${chunk.chunkIndex}`;
+
+        if (seenSources.has(sourceKey)) {
+          return false;
+        }
+
+        seenSources.add(sourceKey);
+        return true;
+      })
+      .map((chunk) => ({
+        documentId: chunk.documentId,
+        title: chunk.title,
+        chunkIndex: chunk.chunkIndex,
+        score: typeof chunk.score === "number"
+          ? Number(chunk.score.toFixed(4))
+          : chunk.score
+      }));
 
     const prompt = `
-You are analyzing a document that may contain structured data such as CSV rows or tables.
+You are analyzing one or more selected documents using only the provided context.
+
+Answer only from the context. If the answer is not present, say you could not find the information in the selected document(s).
+
+When multiple documents are relevant, synthesize across them and use document names naturally when comparing or attributing claims.
+
+Do not invent information or rely on knowledge outside the context.
+
+The context may contain structured data such as CSV rows or tables.
 
 Each line may represent an entry such as:
 Name, Role, Company
@@ -248,9 +308,6 @@ Name, Role, Company
 Extract information carefully from the rows.
 
 If the question asks for a list, extract all matching rows from the provided context.
-
-If the information cannot be found in the context, say:
-"I could not find this information in the document."
 
 CONTEXT:
 ${context}
@@ -270,6 +327,8 @@ ${trimmedQuestion}
     res.json({
       ok: true,
       answer: llm.text,
+      sources,
+      documentIds: selectedDocumentIds
     });
 
   } catch (err) {
