@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Empty,
   EmptyHeader,
@@ -16,6 +17,7 @@ import {
   EmptyContent,
 } from "@/components/ui/empty";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAssistantContext } from "@/context/assistant-context";
 import {
   Upload,
@@ -24,7 +26,9 @@ import {
   FileCode,
   File,
   Search,
-  SearchX
+  SearchX,
+  MessageSquare,
+  X
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiUrl } from "@/lib/api";
@@ -42,7 +46,9 @@ export default function DocumentsPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState("");
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
 
+  const router = useRouter();
   const { setContext, clearContext } = useAssistantContext();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { addToast } = useToast();
@@ -126,6 +132,7 @@ export default function DocumentsPage() {
       });
 
       setDocuments((prev) => prev.filter((d) => d._id !== id));
+      setSelectedDocumentIds((prev) => prev.filter((selectedId) => selectedId !== id));
       addToast({
         type: "success",
         title: "Document deleted",
@@ -136,6 +143,22 @@ export default function DocumentsPage() {
         title: "Failed to delete",
       });
     }
+  }
+
+  function toggleDocumentSelection(id: string) {
+    setSelectedDocumentIds((prev) => {
+      if (prev.includes(id)) {
+        return prev.filter((selectedId) => selectedId !== id);
+      }
+
+      return [...prev, id];
+    });
+  }
+
+  function chatWithSelectedDocuments() {
+    if (!selectedDocumentIds.length) return;
+
+    router.push(`/documents/chat?ids=${selectedDocumentIds.join(",")}`);
   }
 
   function getFileIcon(type: string) {
@@ -221,7 +244,7 @@ export default function DocumentsPage() {
                       </EmptyMedia>
                       <EmptyTitle>No results found</EmptyTitle>
                       <EmptyDescription>
-                        We couldn't find any matches for "{search}". Check your spelling or try another keyword.
+                        We couldn&apos;t find any matches for &quot;{search}&quot;. Check your spelling or try another keyword.
                       </EmptyDescription>
                     </EmptyHeader>
                     <EmptyContent>
@@ -254,61 +277,131 @@ export default function DocumentsPage() {
 
             {/* Document Grid */}
             {filteredDocs.length > 0 && (
-              <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-                {filteredDocs.map((doc) => (
-                  <Link key={doc._id} href={`/documents/${doc._id}`}>
-                    <Card className="p-5 flex flex-col justify-between cursor-pointer transition-all hover:border-primary hover:shadow-lg hover:-translate-y-0.5">
-                      {/* Top */}
-                      <div className="flex items-start gap-3">
-                        <div className="p-2 rounded-md bg-muted">
-                          {getFileIcon(doc.fileType)}
-                        </div>
+              <div className="space-y-5">
+                {selectedDocumentIds.length > 0 && (
+                  <div className="flex flex-col gap-3 rounded-lg border border-primary/30 bg-primary/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="text-xs">
+                        Selected: {selectedDocumentIds.length}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground">
+                        Choose documents to chat with together
+                      </span>
+                    </div>
 
-                        <div className="flex-1">
-                          <p className="font-semibold truncate">
-                            {doc.title || "Untitled"}
-                          </p>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Button
+                        disabled={!selectedDocumentIds.length}
+                        onClick={chatWithSelectedDocuments}
+                        className="gap-2"
+                      >
+                        <MessageSquare className="size-4" />
+                        Chat with Selected
+                      </Button>
 
-                          <div className="flex flex-wrap items-center gap-2 mt-2">
-                            <Badge variant="secondary" className="text-xs">
-                              {doc.fileType}
-                            </Badge>
+                      <Button
+                        variant="outline"
+                        onClick={() => setSelectedDocumentIds([])}
+                        className="gap-2"
+                      >
+                        <X className="size-4" />
+                        Clear Selection
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
-                            <Badge variant="outline" className="text-xs font-mono">
-                              {doc.chunkCount} chunks
-                            </Badge>
+                <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+                  {filteredDocs.map((doc) => {
+                    const isSelected = selectedDocumentIds.includes(doc._id);
 
-                            {doc.size && (
-                              <Badge variant="outline" className="text-xs">
-                                {formatSize(doc.size)}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Bottom */}
-                      <div className="flex justify-between items-center mt-6">
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(doc.createdAt).toLocaleDateString()}
-                        </span>
-
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive hover:bg-destructive/10"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            deleteDoc(doc._id);
-                          }}
+                    return (
+                      <Link key={doc._id} href={`/documents/${doc._id}`}>
+                        <Card
+                          className={`p-5 flex flex-col justify-between cursor-pointer transition-all hover:border-primary hover:shadow-lg hover:-translate-y-0.5 ${
+                            isSelected
+                              ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/30"
+                              : ""
+                          }`}
                         >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
-                    </Card>
-                  </Link>
-                ))}
+                          {/* Top */}
+                          <div className="flex items-start gap-3">
+                            <div className="p-2 rounded-md bg-muted">
+                              {getFileIcon(doc.fileType)}
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start gap-3">
+                                <p className="min-w-0 flex-1 truncate font-semibold">
+                                  {doc.title || "Untitled"}
+                                </p>
+
+                                <div
+                                  className="flex items-center gap-2"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                  }}
+                                >
+                                  {isSelected && (
+                                    <Badge variant="secondary" className="hidden text-xs sm:inline-flex">
+                                      Selected
+                                    </Badge>
+                                  )}
+
+                                  <Checkbox
+                                    checked={isSelected}
+                                    aria-label={`Select ${doc.title || "Untitled"}`}
+                                    onCheckedChange={() => toggleDocumentSelection(doc._id)}
+                                    onKeyDown={(e) => {
+                                      e.stopPropagation();
+                                    }}
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2 mt-2">
+                                <Badge variant="secondary" className="text-xs">
+                                  {doc.fileType}
+                                </Badge>
+
+                                <Badge variant="outline" className="text-xs font-mono">
+                                  {doc.chunkCount} chunks
+                                </Badge>
+
+                                {doc.size && (
+                                  <Badge variant="outline" className="text-xs">
+                                    {formatSize(doc.size)}
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Bottom */}
+                          <div className="flex justify-between items-center mt-6">
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(doc.createdAt).toLocaleDateString()}
+                            </span>
+
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:bg-destructive/10"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                deleteDoc(doc._id);
+                              }}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          </div>
+                        </Card>
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
