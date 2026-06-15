@@ -1,11 +1,12 @@
 const pdf = require("pdf-parse");
 const multer = require("multer");
+const mongoose = require("mongoose");
 
 const Document = require("../models/document.model");
 const DocumentChunk = require("../models/documentChunk.model");
 const SystemSettings = require("../models/systemSettings.model");
 
-const { processDocument, queryDocument } = require("../services/documentService");
+const { processDocument, queryDocuments } = require("../services/documentService");
 const { runLLM } = require("../agents/llmAdapter");
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -144,7 +145,72 @@ async function listDocuments(req, res) {
 async function chatWithDocument(req, res) {
   try {
 
-    const { documentId, question } = req.body;
+    const { documentId, documentIds, question } = req.body;
+
+    if (typeof question !== "string" || !question.trim()) {
+      return res.status(400).json({
+        ok: false,
+        error: "question_required",
+      });
+    }
+
+    const requestedDocumentIds = Array.isArray(documentIds)
+      ? documentIds
+      : [documentId];
+
+    const selectedDocumentIds = [...new Set(
+      requestedDocumentIds
+        .filter(Boolean)
+        .map((id) => id.toString())
+    )];
+
+    if (!selectedDocumentIds.length) {
+      return res.status(400).json({
+        ok: false,
+        error: "document_required",
+      });
+    }
+
+    if (selectedDocumentIds.length > 10) {
+      return res.status(400).json({
+        ok: false,
+        error: "too_many_documents",
+      });
+    }
+
+    const hasInvalidDocumentId = selectedDocumentIds.some(
+      (id) => !mongoose.Types.ObjectId.isValid(id)
+    );
+
+    if (hasInvalidDocumentId) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_document_id",
+      });
+    }
+
+    const documents = await Document.find({
+      _id: { $in: selectedDocumentIds },
+      userId: req.user._id
+    }).lean();
+
+    if (documents.length !== selectedDocumentIds.length) {
+      return res.status(404).json({
+        ok: false,
+        error: "Document not found"
+      });
+    }
+
+    const hasNonReadyDocument = documents.some((document) => document.status !== "ready");
+
+    if (hasNonReadyDocument) {
+      return res.status(400).json({
+        ok: false,
+        error: "document_not_ready"
+      });
+    }
+
+    const trimmedQuestion = question.trim();
 
     /* ---------- Load user settings ---------- */
 
@@ -163,11 +229,11 @@ async function chatWithDocument(req, res) {
 
     /* ---------- Query vector store ---------- */
 
-    const chunks = await queryDocument(
+    const chunks = await queryDocuments(
       agent,
       req.user._id,
-      documentId,
-      question,
+      selectedDocumentIds,
+      trimmedQuestion,
       topK
     );
 
@@ -190,7 +256,7 @@ CONTEXT:
 ${context}
 
 QUESTION:
-${question}
+${trimmedQuestion}
 `;
 
     /* ---------- Run LLM ---------- */
