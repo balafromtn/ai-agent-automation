@@ -1,17 +1,48 @@
 const Workflow = require("../models/workflow.model");
 const Task = require("../models/task.model");
+const workflowVersionService = require("../services/workflowVersion.service");
+const { normalizeWorkflowMetadata, getWorkflowGraph } = require("../utils/workflowMetadata");
+
+const RESERVED_WORDS = ['steps', 'workflow', 'results', 'last', 'input', 'output', 'raw', 'prompt', 'success', 'timestamp'];
+
+function validateAliases(steps) {
+    if (!steps) return;
+    const aliases = steps.filter(s => s.alias).map(s => s.alias);
+    const duplicates = aliases.filter((a, i) => aliases.indexOf(a) !== i);
+    if (duplicates.length) {
+        throw new Error(`Duplicate aliases: ${duplicates.join(', ')}`);
+    }
+    const reservedCollisions = aliases.filter(a => RESERVED_WORDS.includes(a));
+    if (reservedCollisions.length) {
+        throw new Error(`Alias cannot use reserved words: ${reservedCollisions.join(', ')}`);
+    }
+}
 
 /** Create a new workflow */
 async function createWorkflow(req, res) {
   try {
     const { name, description, agentId, metadata } = req.body;
+
+    // Validate aliases if steps exist
+    if (metadata && metadata.steps) {
+      try {
+        validateAliases(metadata.steps);
+      } catch (err) {
+        return res.status(400).json({ ok: false, error: err.message });
+      }
+    }
+
     const workflow = await Workflow.create({
       name,
       description,
       userId: req.user._id,
       agentId: agentId || null,
-      metadata: metadata || {},
+      metadata: normalizeWorkflowMetadata(metadata),
     });
+
+    // Create initial version configuration snapshot
+    await workflowVersionService.createVersionIfNeeded(workflow, req.user._id, "Initial version");
+
     res.status(201).json({ ok: true, workflow });
   } catch (err) {
     console.error("createWorkflow error", err);
@@ -50,7 +81,6 @@ async function updateWorkflow(req, res) {
     if (!workflow) return res.status(404).json({ error: "not_found" });
     if (workflow.userId.toString() !== req.user._id.toString()) return res.status(403).json({ error: "forbidden" });
 
-    // Object.assign(workflow, req.body); // update fields from request
     const allowed = ["name", "description", "status", "tasks", "agentId"];
 
     for (const key of allowed) {
@@ -60,6 +90,9 @@ async function updateWorkflow(req, res) {
     }
 
     await workflow.save();
+
+    // Create a new version if name, description, or agentId configuration details changed
+    await workflowVersionService.createVersionIfNeeded(workflow, req.user._id, "Updated details");
 
     res.json({ ok: true, workflow });
   } catch (err) {
@@ -76,12 +109,7 @@ async function deleteWorkflow(req, res) {
     if (workflow.userId.toString() !== req.user._id.toString())
       return res.status(403).json({ error: "forbidden" });
 
-    // Use deleteOne on the document
     await workflow.deleteOne();
-
-    // Or alternatively, directly:
-    // await Workflow.findByIdAndDelete(req.params.id);
-
     res.json({ ok: true, message: "workflow_deleted" });
   } catch (err) {
     console.error("deleteWorkflow error", err);
@@ -101,7 +129,6 @@ async function addTaskToWorkflow(req, res) {
     const { taskId } = req.body;
     if (!taskId) return res.status(400).json({ error: "taskId_required" });
 
-    // 👇 Prevent duplicates
     if (workflow.tasks.includes(taskId)) {
       return res.json({
         ok: true,
@@ -133,6 +160,8 @@ async function assignAgent(req, res) {
     workflow.agentId = agentId || null;
     await workflow.save();
 
+    await workflowVersionService.createVersionIfNeeded(workflow, req.user._id, "Assigned agent");
+
     return res.json({ ok: true, workflow });
   } catch (err) {
     console.error("assignAgent error", err);
@@ -151,18 +180,12 @@ async function runWorkflowNow(req, res) {
     if (workflow.userId.toString() !== req.user._id.toString())
       return res.status(403).json({ ok: false, error: "forbidden" });
 
-    const steps = Array.isArray(workflow.metadata?.steps)
-      ? workflow.metadata.steps
-      : [];
-    const edges = Array.isArray(workflow.metadata?.edges)
-      ? workflow.metadata.edges
-      : [];
+    const { steps, edges } = getWorkflowGraph(workflow);
 
     if (steps.length === 0) {
       return res.status(400).json({ ok: false, error: "workflow_has_no_steps" });
     }
 
-    // Create task
     const task = await Task.create({
       name: `Workflow Run - ${workflow.name}`,
       workflowId,
@@ -179,7 +202,6 @@ async function runWorkflowNow(req, res) {
       status: "pending"
     });
 
-    // 🔥 Add task to workflow list
     workflow.tasks.push(task._id);
     await workflow.save();
 
@@ -190,9 +212,7 @@ async function runWorkflowNow(req, res) {
   }
 }
 
-/** Update workflow steps (PUT /api/workflows/:workflowId/steps)
- * body: { steps: [ { stepId, type, prompt, method, url, body, options } ] }
- */
+/** Update workflow steps (PUT /api/workflows/:workflowId/steps) */
 async function updateWorkflowSteps(req, res) {
   try {
     const workflow = await Workflow.findById(req.params.workflowId);
@@ -211,43 +231,42 @@ async function updateWorkflowSteps(req, res) {
       return res.status(400).json({ error: "Invalid steps" });
     }
 
-    // 🔥 CLEAN STEPS (REMOVE LEGACY FIELDS)
+    // Validate aliases
+    try {
+      validateAliases(steps);
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
+
+    // Clean steps (remove legacy fields)
     steps = steps.map((s) => {
       const clean = { ...s };
-
       delete clean.cases;
       delete clean.defaultTarget;
       delete clean.trueTarget;
       delete clean.falseTarget;
-
       return clean;
     });
 
-    // 🔥 VALIDATE EDGES
+    // Validate edges
     edges = Array.isArray(edges)
       ? edges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-
-        // 🔥 keep everything important
-        label: e.label || "",
-        condition: e.condition || null,
-        caseValue: e.caseValue || null,
-
-        // optional but good
-        animated: e.animated ?? true,
-        style: e.style || { strokeWidth: 2 },
-      }))
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          label: e.label || "",
+          condition: e.condition || null,
+          caseValue: e.caseValue || null,
+          animated: e.animated ?? true,
+          style: e.style || { strokeWidth: 2 },
+        }))
       : [];
 
-    workflow.metadata = workflow.metadata || {};
-    workflow.metadata.steps = steps;
-    workflow.metadata.edges = edges;
-
+    workflow.metadata = normalizeWorkflowMetadata({ steps, edges });
     workflow.markModified("metadata");
-
     await workflow.save();
+
+    await workflowVersionService.createVersionIfNeeded(workflow, req.user._id, "Updated graph configuration");
 
     return res.json({ ok: true, workflow });
   } catch (err) {
@@ -256,6 +275,83 @@ async function updateWorkflowSteps(req, res) {
   }
 }
 
+async function exportWorkflow(req, res) {
+  try {
+    const workflow = await Workflow.findById(req.params.workflowId);
+    if (!workflow) return res.status(404).json({ ok: false, error: "not_found" });
+    if (workflow.userId.toString() !== req.user._id.toString())
+      return res.status(403).json({ ok: false, error: "forbidden" });
 
+    const { steps, edges } = getWorkflowGraph(workflow);
 
-module.exports = { createWorkflow, listWorkflows, getWorkflow, updateWorkflow, deleteWorkflow, addTaskToWorkflow, assignAgent, runWorkflowNow, updateWorkflowSteps };
+    const exportData = {
+      id: workflow._id.toString(),
+      name: workflow.name,
+      description: workflow.description || "",
+      category: "",
+      icon: "",
+      tags: [],
+      agentId: workflow.agentId ? workflow.agentId.toString() : null,
+      steps,
+      edges,
+    };
+
+    res.setHeader("Content-Disposition", `attachment; filename="${workflow.name.replace(/\s+/g, "_")}.json"`);
+    res.setHeader("Content-Type", "application/json");
+    return res.json(exportData);
+  } catch (err) {
+    console.error("exportWorkflow error", err);
+    return res.status(500).json({ ok: false, error: "server_error" });
+  }
+}
+
+async function cloneWorkflow(req, res) {
+  try {
+    const originalWorkflow = await Workflow.findById(req.params.id);
+    if (!originalWorkflow) return res.status(404).json({ ok: false, error: "not_found" });
+
+    if (originalWorkflow.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
+
+    const clonedMetadata = JSON.parse(JSON.stringify(originalWorkflow.metadata || { steps: [], edges: [] }));
+
+    // Validate aliases in cloned workflow
+    if (clonedMetadata.steps) {
+      try {
+        validateAliases(clonedMetadata.steps);
+      } catch (err) {
+        return res.status(400).json({ ok: false, error: err.message });
+      }
+    }
+
+    const clonedWorkflow = await Workflow.create({
+      name: `${originalWorkflow.name} (Copy)`,
+      description: originalWorkflow.description,
+      userId: req.user._id,
+      agentId: originalWorkflow.agentId || null,
+      metadata: normalizeWorkflowMetadata(clonedMetadata),
+    });
+
+    await workflowVersionService.createVersionIfNeeded(clonedWorkflow, req.user._id, "Cloned from original");
+
+    res.status(201).json({ ok: true, workflow: clonedWorkflow });
+  } catch (err) {
+    console.error("cloneWorkflow error", err);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+}
+
+module.exports = { 
+  createWorkflow, 
+  listWorkflows, 
+  getWorkflow, 
+  updateWorkflow, 
+  deleteWorkflow, 
+  addTaskToWorkflow, 
+  assignAgent,
+  runWorkflowNow,
+  updateWorkflowSteps,
+  exportWorkflow,
+  cloneWorkflow
+};

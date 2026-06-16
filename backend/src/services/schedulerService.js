@@ -4,6 +4,7 @@ const Schedule = require("../models/schedule.model");
 const Workflow = require("../models/workflow.model");
 const Task = require("../models/task.model");
 const mongoose = require("mongoose");
+const { getWorkflowGraph } = require("../utils/workflowMetadata");
 
 const jobs = new Map();
 
@@ -18,12 +19,9 @@ async function createTaskForSchedule(schedule) {
       return;
     }
 
-    const steps = workflow.metadata?.steps;
-    const edges = Array.isArray(workflow.metadata?.edges)
-      ? workflow.metadata.edges
-      : [];
+    const { steps, edges } = getWorkflowGraph(workflow);
 
-    if (!Array.isArray(steps) || steps.length === 0) {
+    if (steps.length === 0) {
       console.warn(
         "Scheduled workflow has no steps:",
         workflow._id.toString()
@@ -38,8 +36,7 @@ async function createTaskForSchedule(schedule) {
       agentId: workflow.agentId || null,
       userId: schedule.userId,
 
-      // ✅ THIS IS THE FIX
-      steps: workflow.metadata?.steps || [],
+      steps,
       currentStep: 0,
 
       input: schedule.taskInput || {},
@@ -162,6 +159,15 @@ async function start() {
         } catch (err) {
           console.error("SchedulerService changeStream handler error", err);
         }
+      });
+      changeStream.on("error", (err) => {
+        console.warn(
+          "SchedulerService: change stream disabled. Schedule changes will require a service restart.",
+          err?.message || err
+        );
+        try {
+          changeStream.close();
+        } catch {}
       });
     } catch (err) {
       console.warn("SchedulerService: change stream not supported or failed to start. You'll need to restart service to pick up schedule changes.", err.message || err);

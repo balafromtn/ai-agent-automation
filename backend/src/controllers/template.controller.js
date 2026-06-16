@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const Workflow = require("../models/workflow.model");
 const { v4: uuidv4 } = require("uuid");
+const { normalizeWorkflowMetadata } = require("../utils/workflowMetadata");
 
 const templatesDir = path.join(__dirname, "../templates");
 
@@ -80,18 +81,25 @@ async function importTemplate(req, res) {
         }
 
         // Generate stepId for every template step
-        const steps = (template.steps || []).map((step) => ({
-            ...step,
-            stepId: uuidv4(),
-        }));
+        const idMap = {};
+        const steps = (template.steps || []).map((step) => {
+            const newId = uuidv4();
+            idMap[step.stepId] = newId;
+            return { ...step, stepId: newId };
+        });
 
+        const edges = (template.edges || []).map((edge) => ({
+            ...edge,
+            source: idMap[edge.source] ?? edge.source,
+            target: idMap[edge.target] ?? edge.target,
+        }));
+        
         const workflow = await Workflow.create({
             name: template.name,
             description: template.description,
             userId: req.user._id,
-            metadata: {
-                steps,
-            },
+            agentId: template.agentId || null,
+            metadata: normalizeWorkflowMetadata({ steps, edges }),
         });
 
         res.json({

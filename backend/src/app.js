@@ -16,6 +16,8 @@ const templateRoutes = require("./routes/template.routes");
 const memoryRoutes = require("./routes/memory.routes");
 const assistantRoutes = require("./routes/assistant.routes");
 const telemetryRoutes = require("./routes/telemetry.routes");
+const insightsRoutes = require("./routes/insights.routes");
+const mcpRoutes = require("./routes/mcp.routes");
 const { globalLimiter, webhookLimiter } = require("./middleware/rateLimit.middleware");
 require("dotenv").config();
 
@@ -51,6 +53,8 @@ app.use("/api/system", systemRoutes);
 app.use("/api/memory", memoryRoutes);
 app.use("/api/assistant", assistantRoutes);
 app.use("/api/telemetry", telemetryRoutes);
+app.use("/api/insights", insightsRoutes);
+app.use("/api/mcp", mcpRoutes);
 
 // generic 404
 app.use((req, res) => res.status(404).json({ error: "Not found" }));

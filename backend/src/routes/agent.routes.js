@@ -15,5 +15,6 @@ router.get("/", listAgents);
 router.get("/:id", getAgent);
 router.put("/:id", updateAgent);
 router.delete("/:id", deleteAgent);
+router.post("/:id/run", runAgent);  // NEW - playground endpoint
 
 module.exports = router;
