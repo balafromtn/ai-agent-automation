@@ -191,10 +191,15 @@ async function runWorkerLoop() {
 
         function getNextEdge(stepLocal, resultLocal) {
           if (stepLocal.type === 'condition') {
-            return edges.find((e) => e.source === getStepId(stepLocal) && e.condition === resultLocal.branch);
+            return edges.find(
+              (e) => e.source === getStepId(stepLocal) && e.condition === resultLocal.branch
+            );
           }
           if (stepLocal.type === 'switch') {
-            const normalize = (v) => String(v || '').toLowerCase().trim();
+            const normalize = (v) =>
+              String(v || '')
+                .toLowerCase()
+                .trim();
             const value = normalize(resultLocal.caseValue);
             const nextEdge = edges.find((e) => {
               if (e.source !== getStepId(stepLocal)) return false;
@@ -208,7 +213,7 @@ async function runWorkerLoop() {
         async function processBranch(startStep, branchContext, isSubBranch = false) {
           let stepNode = startStep;
           let stepCount = 0;
-          let branchSuccess = true;
+          const branchSuccess = true;
 
           while (stepNode && stepCount < 50) {
             stepCount++;
@@ -221,19 +226,19 @@ async function runWorkerLoop() {
               if (outEdges.length < 2) {
                 const errMsg = `Runtime Error: Parallel node requires at least 2 branches.`;
                 console.error(`❌ ${errMsg}`);
-                
+
                 const errorResult = {
                   stepId: sId,
                   type: 'parallel',
                   input: 'Branch Validation',
                   output: errMsg,
                   success: false,
-                  timestamp: new Date()
+                  timestamp: new Date(),
                 };
-                
+
                 await Task.findByIdAndUpdate(task._id, { $push: { stepResults: errorResult } });
                 branchContext.results.push(errorResult);
-                
+
                 return { success: false, branchContext };
               }
 
@@ -244,10 +249,12 @@ async function runWorkerLoop() {
                 input: 'Parallel Execution Start',
                 output: `${outEdges.length} branches spawned concurrently...`,
                 success: true,
-                timestamp: new Date()
+                timestamp: new Date(),
               };
-              
-              await Task.findByIdAndUpdate(task._id, { $push: { stepResults: parallelStartResult } });
+
+              await Task.findByIdAndUpdate(task._id, {
+                $push: { stepResults: parallelStartResult },
+              });
               branchContext.results.push(parallelStartResult);
 
               const branchPromises = outEdges.map((edge) => {
@@ -255,7 +262,7 @@ async function runWorkerLoop() {
                 const isolatedContext = {
                   ...branchContext,
                   results: [...branchContext.results],
-                  last: branchContext.last ? { ...branchContext.last } : null
+                  last: branchContext.last ? { ...branchContext.last } : null,
                 };
                 return processBranch(targetStep, isolatedContext, true);
               });
@@ -270,10 +277,10 @@ async function runWorkerLoop() {
                 const settled = await Promise.allSettled(branchPromises);
                 branchResults = settled.map((res) => {
                   if (res.status === 'fulfilled') {
-                    if (!res.value.success) parallelSuccess = false; 
+                    if (!res.value.success) parallelSuccess = false;
                     return res.value;
                   } else {
-                    parallelSuccess = false; 
+                    parallelSuccess = false;
                     return { success: false, branchContext: { last: { output: res.reason } } };
                   }
                 });
@@ -284,33 +291,38 @@ async function runWorkerLoop() {
               branchResults.forEach((r, index) => {
                 const targetId = outEdges[index].target;
                 const outputVal = r.branchContext?.last?.output || null;
-                aggregatedOutputs[targetId] = outputVal; 
-                flatOutputs.push(outputVal);             
+                aggregatedOutputs[targetId] = outputVal;
+                flatOutputs.push(outputVal);
               });
 
               branchContext.parallel = { results: aggregatedOutputs, flat: flatOutputs };
               branchContext.last = { output: aggregatedOutputs };
 
-              if (!parallelSuccess && strategy === 'fail-fast') return { success: false, branchContext };
+              if (!parallelSuccess && strategy === 'fail-fast')
+                return { success: false, branchContext };
 
-              const uniqueJoinNodes = [...new Set(branchResults.map((r) => r.joinNode ? getStepId(r.joinNode) : 'MISSING_JOIN'))];
+              const uniqueJoinNodes = [
+                ...new Set(
+                  branchResults.map((r) => (r.joinNode ? getStepId(r.joinNode) : 'MISSING_JOIN'))
+                ),
+              ];
 
               if (uniqueJoinNodes.includes('MISSING_JOIN') || uniqueJoinNodes.length > 1) {
                 const errMsg = `Join Synchronization Failed: All branches must converge to exactly one Join node. Detected: [${uniqueJoinNodes.join(', ')}]`;
                 console.error(`❌ ${errMsg}`);
-                
+
                 const errorResult = {
                   stepId: sId,
                   type: 'join',
                   input: 'Checking branch convergence',
                   output: errMsg,
                   success: false,
-                  timestamp: new Date()
+                  timestamp: new Date(),
                 };
-                
+
                 await Task.findByIdAndUpdate(task._id, { $push: { stepResults: errorResult } });
                 branchContext.results.push(errorResult);
-                
+
                 return { success: false, branchContext };
               }
 
@@ -323,7 +335,7 @@ async function runWorkerLoop() {
                   input: aggregatedOutputs,
                   output: aggregatedOutputs,
                   success: true,
-                  timestamp: new Date()
+                  timestamp: new Date(),
                 };
                 await Task.findByIdAndUpdate(task._id, { $push: { stepResults: joinResult } });
                 branchContext.results.push(joinResult);
@@ -337,8 +349,16 @@ async function runWorkerLoop() {
               }
             }
             const result = await executeStep(stepNode, branchContext, agent);
+            console.log(`StepNode: ${stepNode.name}`);
+            console.log(`result: ${result}`);
+            if (!result) {
+              throw new Error(
+                `executeStep returned ${result} for step ${stepNode.name} (${stepNode.type})`
+              );
+            }
             result.name = stepNode.name;
             result.type = stepNode.type;
+            console.log(`result name: ${result.name}`);
 
             await Task.findByIdAndUpdate(task._id, { $push: { stepResults: result } });
 
