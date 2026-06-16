@@ -18,8 +18,10 @@ import {
   XCircle,
   Download,
   History,
+  Globe,
 } from 'lucide-react';
 import VersionHistoryDialog from '@/components/workflow/version-history-dialog';
+import ApiSettingsDialog from '@/components/workflow/api-settings-dialog';
 import {
   Select,
   SelectContent,
@@ -153,6 +155,7 @@ export default function WorkflowDetailPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [historyOpen, setHistoryOpen] = useState<boolean>(false);
   const [nodeDefinitions, setNodeDefinitions] = useState<NodeDefinition[]>([]);
+  const [apiSettingsOpen, setApiSettingsOpen] = useState<boolean>(false);
   const { addToast } = useToast();
 
   function getStepStatus(stepId: string): 'pending' | 'completed' | 'failed' {
@@ -408,6 +411,10 @@ export default function WorkflowDetailPage() {
                   Configure
                 </Button>
               </Link>
+              <Button variant="outline" onClick={() => setApiSettingsOpen(true)}>
+                <Globe className="mr-2 size-4" />
+                API Settings
+              </Button>
               <Button
                 onClick={async () => {
                   const res = await fetch(apiUrl(`/workflows/${workflow._id}/run`), {
@@ -512,6 +519,13 @@ export default function WorkflowDetailPage() {
             open={historyOpen}
             onOpenChange={setHistoryOpen}
             onRollbackSuccess={fetchWorkflow}
+          />
+
+          <ApiSettingsDialog
+            workflow={workflow}
+            open={apiSettingsOpen}
+            onOpenChange={setApiSettingsOpen}
+            onSaveSuccess={fetchWorkflow}
           />
         </div>
       </main>

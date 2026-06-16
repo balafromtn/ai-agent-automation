@@ -226,12 +226,23 @@ Use the MEMORY section when relevant.`;
       }
     }
 
+    const headers = { ...(step.headers || {}) };
+    if (context.workflow && context.workflow._id) {
+      headers['x-source-workflow-id'] = String(context.workflow._id);
+    }
+    if (context.workflow && context.workflow.name) {
+      headers['x-source-workflow-name'] = String(context.workflow.name);
+    }
+    if (context.taskId) {
+      headers['x-source-task-id'] = String(context.taskId);
+    }
+
     const response = await axios({
       method: (config.method || 'GET').toLowerCase(),
       url: interpolate(config.url || '', context),
       data: parsedBody,
-      headers: config.headers || {},
-      timeout: config.timeout || 30000,
+      headers: { ...(config.headers || {}), ...headers },
+      timeout: config.timeout || step.timeout || 30000,
       validateStatus: () => true,
     });
 

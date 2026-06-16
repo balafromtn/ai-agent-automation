@@ -18,21 +18,21 @@ export interface NodeDefinition {
   fields: NodeField[];
 }
 export type StepType =
-  | "LLM"
-  | "HTTP"
-  | "Delay"
-  | "Tool"
-  | "MCP"
-  | "Document"
-  | "Condition"
-  | "Switch"
-  | "GitHub"
-  | "Slack"
-  | "Discord"
-  | "Parallel"
-  | "Join";
+  | 'LLM'
+  | 'HTTP'
+  | 'Delay'
+  | 'Tool'
+  | 'MCP'
+  | 'Document'
+  | 'Condition'
+  | 'Switch'
+  | 'GitHub'
+  | 'Slack'
+  | 'Discord'
+  | 'Parallel'
+  | 'Join';
 
-export type ToolType = "email" | "file" | "browser";
+export type ToolType = 'email' | 'file' | 'browser';
 
 export interface WorkflowNode {
   id: string;
@@ -62,7 +62,7 @@ export interface WorkflowEdge {
   id: string;
   source: string;
   target: string;
-  condition?: "true" | "false";
+  condition?: 'true' | 'false';
   caseValue?: string;
   label?: string;
   animated?: boolean;
@@ -78,6 +78,14 @@ export interface WorkflowMetadata {
   edges?: WorkflowEdge[];
 }
 
+export interface WorkflowApiSettings {
+  enabled: boolean;
+  endpointName: string;
+  authentication: boolean;
+  rateLimit: boolean;
+  responseStepId?: string;
+}
+
 export interface WorkflowPayload {
   _id: string;
   name: string;
@@ -86,6 +94,7 @@ export interface WorkflowPayload {
   agentId?: string;
   tasks?: (string | { _id: string })[];
   metadata?: WorkflowMetadata;
+  apiSettings?: WorkflowApiSettings;
   createdAt?: string;
   updatedAt?: string;
 }

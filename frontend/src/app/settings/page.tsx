@@ -13,7 +13,7 @@ import { motion } from 'framer-motion';
 import { Switch } from '@/components/ui/switch';
 import { useAssistantContext } from '@/context/assistant-context';
 import { useToast } from '@/hooks/use-toast';
-import { ChevronRightIcon } from 'lucide-react';
+import { ChevronRightIcon, Key, Trash2, Copy, Check } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -247,6 +247,104 @@ export default function SettingsPage() {
     gemini?: boolean;
     huggingface?: boolean;
   }>({});
+
+  // API Key State
+  type ApiKeyType = {
+    _id: string;
+    name: string;
+    createdAt: string;
+  };
+  const [apiKeys, setApiKeys] = useState<ApiKeyType[]>([]);
+  const [loadingKeys, setLoadingKeys] = useState(true);
+  const [newKeyName, setNewKeyName] = useState('');
+  const [generatedKey, setGeneratedKey] = useState<string | null>(null);
+  const [generatingKey, setGeneratingKey] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(false);
+
+  async function fetchApiKeys() {
+    try {
+      const res = await fetch(apiUrl('/keys'), {
+        headers: {
+          Authorization: 'Bearer ' + localStorage.getItem('token'),
+        },
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setApiKeys(data.keys || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch API keys:', err);
+    } finally {
+      setLoadingKeys(false);
+    }
+  }
+
+  async function handleGenerateKey() {
+    if (!newKeyName.trim()) return;
+    setGeneratingKey(true);
+    try {
+      const res = await fetch(apiUrl('/keys'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + localStorage.getItem('token'),
+        },
+        body: JSON.stringify({ name: newKeyName.trim() }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setGeneratedKey(data.rawKey);
+        setNewKeyName('');
+        fetchApiKeys();
+        addToast({
+          type: 'success',
+          title: 'API Key Generated',
+          description: 'Your new API key has been created successfully.',
+        });
+      }
+    } catch (err) {
+      console.error('Failed to generate key:', err);
+      addToast({
+        type: 'error',
+        title: 'Generation Failed',
+        description: 'Could not generate API key.',
+      });
+    } finally {
+      setGeneratingKey(false);
+    }
+  }
+
+  async function handleRevokeKey(keyId: string) {
+    if (
+      !window.confirm('Are you sure you want to revoke this API key? This action cannot be undone.')
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch(apiUrl(`/keys/${keyId}`), {
+        method: 'DELETE',
+        headers: {
+          Authorization: 'Bearer ' + localStorage.getItem('token'),
+        },
+      });
+      const data = await res.json();
+      if (data.ok) {
+        fetchApiKeys();
+        addToast({
+          type: 'success',
+          title: 'Key Revoked',
+          description: 'The API key has been revoked successfully.',
+        });
+      }
+    } catch (err) {
+      console.error('Failed to revoke key:', err);
+      addToast({
+        type: 'error',
+        title: 'Revocation Failed',
+        description: 'Could not revoke API key.',
+      });
+    }
+  }
 
   const [telemetry, setTelemetry] = useState<TelemetryState>(DEFAULT_TELEMETRY);
 
@@ -506,6 +604,7 @@ export default function SettingsPage() {
     loadSettings();
     loadEnv();
     loadTelemetry();
+    fetchApiKeys();
   }, []);
 
   if (loading) return <p className="p-8">Loading…</p>;
@@ -596,6 +695,100 @@ export default function SettingsPage() {
                         <div>HF API: {env.hf ? '✅' : '❌'}</div>
                       </div>
                     )}
+                  </Card>
+                </motion.div>
+
+                {/* API Keys */}
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <Card className="p-6 space-y-4">
+                    <h2 className="text-lg font-semibold flex items-center gap-2">
+                      <Key className="size-5 text-primary" />
+                      API Keys
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      Generate keys to authenticate requests when calling published workflow
+                      endpoints.
+                    </p>
+
+                    {/* Key generation form */}
+                    <div className="space-y-2.5">
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Key name (e.g. My App)"
+                          value={newKeyName}
+                          onChange={(e) => setNewKeyName(e.target.value)}
+                        />
+                        <Button
+                          onClick={handleGenerateKey}
+                          disabled={generatingKey || !newKeyName.trim()}
+                        >
+                          Generate
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Success dialog */}
+                    {generatedKey && (
+                      <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg space-y-2 animate-in fade-in zoom-in-95 duration-200">
+                        <div className="text-xs font-semibold text-emerald-500 flex justify-between items-center">
+                          <span>Save this key (it won&apos;t be shown again!):</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-6 text-emerald-500 hover:bg-emerald-500/20"
+                            onClick={() => {
+                              navigator.clipboard.writeText(generatedKey);
+                              setCopiedKey(true);
+                              setTimeout(() => setCopiedKey(false), 2000);
+                            }}
+                          >
+                            {copiedKey ? (
+                              <Check className="size-3.5" />
+                            ) : (
+                              <Copy className="size-3.5" />
+                            )}
+                          </Button>
+                        </div>
+                        <div className="font-mono text-xs break-all bg-background border p-2 rounded select-all text-foreground">
+                          {generatedKey}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* API keys list */}
+                    <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                      {loadingKeys ? (
+                        <p className="text-xs text-muted-foreground animate-pulse">
+                          Loading keys...
+                        </p>
+                      ) : apiKeys.length === 0 ? (
+                        <p className="text-xs text-muted-foreground italic">
+                          No API keys created yet.
+                        </p>
+                      ) : (
+                        apiKeys.map((key) => (
+                          <div
+                            key={key._id}
+                            className="flex items-center justify-between border p-2.5 rounded-lg bg-muted/10 text-xs"
+                          >
+                            <div className="min-w-0">
+                              <p className="font-semibold truncate text-foreground">{key.name}</p>
+                              <p className="text-[10px] text-muted-foreground mt-0.5">
+                                Created: {new Date(key.createdAt).toLocaleDateString()}
+                              </p>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-7 text-destructive hover:bg-destructive/10"
+                              onClick={() => handleRevokeKey(key._id)}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </Card>
                 </motion.div>
 

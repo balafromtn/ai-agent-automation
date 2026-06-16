@@ -1,12 +1,13 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { AppSidebar } from "@/components/app-sidebar";
-import { Card } from "@/components/ui/card";
-import { AuthGuard } from "@/components/auth/auth-guard";
-import { Badge } from "@/components/ui/badge";
-import { useApi } from "@/hooks/useApi";
+import { useEffect, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { AppSidebar } from '@/components/app-sidebar';
+import { Card } from '@/components/ui/card';
+import { AuthGuard } from '@/components/auth/auth-guard';
+import { Badge } from '@/components/ui/badge';
+import { useApi } from '@/hooks/useApi';
 import {
   CheckCircle2,
   XCircle,
@@ -17,35 +18,26 @@ import {
   Cpu,
   Thermometer,
   Database,
-} from "lucide-react";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { useAssistantContext } from "@/context/assistant-context";
-import { apiUrl } from "@/lib/api";
+  Globe,
+} from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { useAssistantContext } from '@/context/assistant-context';
+import { apiUrl } from '@/lib/api';
 
 function getStepIcon(status: string) {
   switch (status) {
-    case "completed":
+    case 'completed':
       return <CheckCircle2 className="size-5 text-success" />;
-    case "running":
+    case 'running':
       return <Circle className="size-5 animate-pulse text-warning" />;
-    case "failed":
+    case 'failed':
       return <XCircle className="size-5 text-destructive" />;
     default:
       return <Circle className="size-5 text-muted-foreground" />;
   }
 }
 
-type StepOutput =
-  | string
-  | number
-  | boolean
-  | Record<string, unknown>
-  | unknown[]
-  | null;
+type StepOutput = string | number | boolean | Record<string, unknown> | unknown[] | null;
 
 type StepResult = {
   stepId: string;
@@ -78,7 +70,7 @@ type RetryHistoryItem = {
 type Task = {
   _id: string;
   name: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: 'pending' | 'running' | 'completed' | 'failed';
   workflowId?: string;
   agentId?: string;
   createdAt: string;
@@ -93,7 +85,7 @@ type Task = {
 };
 
 type AgentMemoryItem = {
-  type: "learned" | "system" | "interaction";
+  type: 'learned' | 'system' | 'interaction';
   content: string;
   confidence?: number;
   createdAt: number;
@@ -112,13 +104,9 @@ type Agent = {
 };
 
 function renderStepOutput(output: StepOutput) {
-  if (output === null) return "null";
+  if (output === null) return 'null';
 
-  if (
-    typeof output === "string" ||
-    typeof output === "number" ||
-    typeof output === "boolean"
-  ) {
+  if (typeof output === 'string' || typeof output === 'number' || typeof output === 'boolean') {
     return String(output);
   }
 
@@ -135,24 +123,24 @@ export default function TaskDetailPage() {
 
   useEffect(() => {
     if (task) {
-      console.log("FULL TASK OBJECT:", task);
+      console.log('FULL TASK OBJECT:', task);
     }
   }, [task]);
 
   const { setContext, clearContext } = useAssistantContext();
 
   function summarizeOutput(output: StepOutput | undefined) {
-    if (output === null || output === undefined) return "no output";
+    if (output === null || output === undefined) return 'no output';
 
-    if (typeof output === "string") {
-      return output.length > 300 ? output.slice(0, 300) + "…" : output;
+    if (typeof output === 'string') {
+      return output.length > 300 ? output.slice(0, 300) + '…' : output;
     }
 
     try {
       const json = JSON.stringify(output);
-      return json.length > 300 ? json.slice(0, 300) + "…" : json;
+      return json.length > 300 ? json.slice(0, 300) + '…' : json;
     } catch {
-      return "unreadable output";
+      return 'unreadable output';
     }
   }
 
@@ -166,14 +154,14 @@ export default function TaskDetailPage() {
       try {
         const res = await fetch(apiUrl(`/agents/${agentId}`), {
           headers: {
-            Authorization: "Bearer " + localStorage.getItem("token"),
+            Authorization: 'Bearer ' + localStorage.getItem('token'),
           },
         });
 
         const data = await res.json();
         if (data.ok && !cancelled) setAgent(data.agent);
       } catch (err) {
-        console.error("Failed to fetch agent", err);
+        console.error('Failed to fetch agent', err);
       }
     }
 
@@ -187,7 +175,7 @@ export default function TaskDetailPage() {
   // Poll while running
   useEffect(() => {
     if (!task) return;
-    if (["completed", "failed"].includes(task.status)) return;
+    if (['completed', 'failed'].includes(task.status)) return;
 
     const interval = setInterval(() => {
       refetch();
@@ -217,7 +205,7 @@ export default function TaskDetailPage() {
     const failedStep = summarizedSteps.find((s) => s.success === false);
 
     setContext({
-      page: "task-detail",
+      page: 'task-detail',
 
       taskId: task._id,
       taskName: task.name,
@@ -237,17 +225,17 @@ export default function TaskDetailPage() {
         : undefined,
 
       status:
-        task.status === "failed"
-          ? `Failed at step "${failedStep?.name ?? "unknown"}"`
+        task.status === 'failed'
+          ? `Failed at step "${failedStep?.name ?? 'unknown'}"`
           : task.status,
 
       recentActivity: summarizedSteps.map((s) => ({
-        type: "task",
+        type: 'task',
         name: s.name,
-        status: s.success ? "completed" : "failed",
+        status: s.success ? 'completed' : 'failed',
       })),
 
-      logScope: "task",
+      logScope: 'task',
     });
   }, [task?._id, task?.status, task?.stepResults?.length, agent?._id]);
 
@@ -262,7 +250,7 @@ export default function TaskDetailPage() {
         <AppSidebar />
         <main
           className="flex-1 transition-[padding] duration-300"
-          style={{ paddingLeft: "var(--sidebar-width, 256px)" }}
+          style={{ paddingLeft: 'var(--sidebar-width, 256px)' }}
         >
           <div className="p-8">
             <div className="mb-8">
@@ -270,17 +258,49 @@ export default function TaskDetailPage() {
                 <h1 className="font-mono text-2xl font-bold">{task.name}</h1>
                 <Badge
                   className={
-                    task.status === "completed"
-                      ? "bg-success/20 text-success border-success/30"
-                      : "bg-muted text-muted-foreground"
+                    task.status === 'completed'
+                      ? 'bg-success/20 text-success border-success/30'
+                      : 'bg-muted text-muted-foreground'
                   }
                 >
                   {task.status}
                 </Badge>
               </div>
-              <p className="mt-2 text-muted-foreground">
-                Workflow id: {task.workflowId}
-              </p>
+              <p className="mt-2 text-muted-foreground">Workflow id: {task.workflowId}</p>
+              {(task.metadata as any)?.trigger === 'workflow_api' && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground bg-muted/30 border border-border/50 rounded-lg p-3 w-fit">
+                  <span className="font-semibold text-foreground flex items-center gap-1.5">
+                    <Globe className="size-4 text-primary" />
+                    Triggered By:
+                  </span>
+                  <Badge variant="secondary" className="font-mono text-xs">
+                    Workflow API
+                  </Badge>
+                  {(task.metadata as any)?.sourceWorkflowId && (
+                    <span className="text-xs">
+                      Called from Workflow:{' '}
+                      <Link
+                        href={`/workflows/${(task.metadata as any).sourceWorkflowId}`}
+                        className="text-primary hover:underline font-mono font-semibold"
+                      >
+                        {(task.metadata as any).sourceWorkflowName ||
+                          (task.metadata as any).sourceWorkflowId}
+                      </Link>
+                    </span>
+                  )}
+                  {(task.metadata as any)?.sourceTaskId && (
+                    <span className="text-xs text-muted-foreground border-l pl-2">
+                      Task:{' '}
+                      <Link
+                        href={`/tasks/${(task.metadata as any).sourceTaskId}`}
+                        className="text-primary hover:underline font-mono"
+                      >
+                        {(task.metadata as any).sourceTaskId.slice(-6).toUpperCase()}
+                      </Link>
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -294,7 +314,10 @@ export default function TaskDetailPage() {
                   {task.retryHistory && task.retryHistory.length > 0 && (
                     <div className="mb-6 space-y-3">
                       {task.retryHistory.map((history, hIndex) => (
-                        <Collapsible key={hIndex} className="rounded-lg border border-destructive/20 bg-destructive/5 p-4">
+                        <Collapsible
+                          key={hIndex}
+                          className="rounded-lg border border-destructive/20 bg-destructive/5 p-4"
+                        >
                           <CollapsibleTrigger className="group flex w-full items-center justify-between text-left">
                             <div className="flex items-center gap-3">
                               <XCircle className="size-4 text-destructive" />
@@ -310,7 +333,9 @@ export default function TaskDetailPage() {
                             <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
                           </CollapsibleTrigger>
                           <CollapsibleContent className="mt-4 pl-7 border-t border-border/50 pt-3 space-y-3">
-                            <p className="text-xs font-semibold text-muted-foreground mb-2">Historical Step Timeline:</p>
+                            <p className="text-xs font-semibold text-muted-foreground mb-2">
+                              Historical Step Timeline:
+                            </p>
                             {history.stepResults?.map((step, sIndex) => {
                               const stepsMeta = task.steps ?? task.metadata?.steps ?? [];
                               const stepMetadata = stepsMeta.find((s) => s.stepId === step.stepId);
@@ -323,12 +348,18 @@ export default function TaskDetailPage() {
                                   )}
                                   <div className="flex-1">
                                     <div className="flex items-center gap-2">
-                                      <span className="font-medium">{stepMetadata?.name || step.stepId}</span>
-                                      <Badge variant="outline" className="text-[10px] px-1 py-0">{step.type}</Badge>
+                                      <span className="font-medium">
+                                        {stepMetadata?.name || step.stepId}
+                                      </span>
+                                      <Badge variant="outline" className="text-[10px] px-1 py-0">
+                                        {step.type}
+                                      </Badge>
                                     </div>
                                     {step.output && (
                                       <pre className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap rounded bg-background p-2 font-mono text-[10px] text-muted-foreground border">
-                                        {typeof step.output === "string" ? step.output : JSON.stringify(step.output, null, 2)}
+                                        {typeof step.output === 'string'
+                                          ? step.output
+                                          : JSON.stringify(step.output, null, 2)}
                                       </pre>
                                     )}
                                   </div>
@@ -344,14 +375,12 @@ export default function TaskDetailPage() {
                   <div className="space-y-4">
                     {stepResults.map((step: StepResult, index: number) => {
                       const outputText =
-                        typeof step.output === "string"
+                        typeof step.output === 'string'
                           ? step.output
                           : JSON.stringify(step.output, null, 2);
                       const stepsMeta = task.metadata?.steps ?? [];
 
-                      const stepMetadata = stepsMeta.find(
-                        (s) => s.stepId === step.stepId,
-                      );
+                      const stepMetadata = stepsMeta.find((s) => s.stepId === step.stepId);
                       return (
                         <div key={index} className="relative">
                           {index < stepResults.length - 1 && (
@@ -361,10 +390,10 @@ export default function TaskDetailPage() {
                             <div className="flex items-start gap-4">
                               {getStepIcon(
                                 step.success === true
-                                  ? "completed"
+                                  ? 'completed'
                                   : step.success === false
-                                    ? "failed"
-                                    : "running",
+                                    ? 'failed'
+                                    : 'running'
                               )}
 
                               <div className="flex-1">
@@ -374,28 +403,21 @@ export default function TaskDetailPage() {
                                       <h3 className="font-semibold">
                                         {stepMetadata?.name || step.stepId}
                                       </h3>
-                                      <Badge
-                                        variant="outline"
-                                        className="text-xs"
-                                      >
+                                      <Badge variant="outline" className="text-xs">
                                         {step.type}
                                       </Badge>
                                     </div>
 
                                     <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                                       <Clock className="size-3" />
-                                      {new Date(
-                                        step.timestamp,
-                                      ).toLocaleString()}
+                                      {new Date(step.timestamp).toLocaleString()}
                                     </div>
                                   </div>
                                   <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
                                 </CollapsibleTrigger>
                                 <CollapsibleContent className="mt-3">
                                   <Card className="bg-muted/30 p-4">
-                                    <p className="mb-2 text-sm font-medium">
-                                      Output:
-                                    </p>
+                                    <p className="mb-2 text-sm font-medium">Output:</p>
                                     {step.output && (
                                       <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-background p-3 font-mono text-xs text-foreground">
                                         {renderStepOutput(step.output)}
@@ -410,9 +432,7 @@ export default function TaskDetailPage() {
                       );
                     })}
 
-                    {executedSteps === 0 && (
-                      <p className="opacity-60">No steps executed yet.</p>
-                    )}
+                    {executedSteps === 0 && <p className="opacity-60">No steps executed yet.</p>}
                   </div>
                 </Card>
               </div>
@@ -420,18 +440,14 @@ export default function TaskDetailPage() {
               <div className="space-y-6">
                 {agent && (
                   <Card className="p-6">
-                    <h2 className="mb-4 text-lg font-semibold">
-                      Agent Inspector
-                    </h2>
+                    <h2 className="mb-4 text-lg font-semibold">Agent Inspector</h2>
 
                     <div className="space-y-4">
                       <div className="flex items-start gap-3">
                         <Bot className="size-5 text-primary" />
                         <div>
                           <p className="text-sm font-medium">{agent.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {agent.type}
-                          </p>
+                          <p className="text-xs text-muted-foreground">{agent.type}</p>
                         </div>
                       </div>
 
@@ -440,7 +456,7 @@ export default function TaskDetailPage() {
                         <div>
                           <p className="text-sm font-medium">Model</p>
                           <p className="text-xs text-muted-foreground">
-                            {agent.config?.model ?? "—"}
+                            {agent.config?.model ?? '—'}
                           </p>
                         </div>
                       </div>
@@ -450,7 +466,7 @@ export default function TaskDetailPage() {
                         <div>
                           <p className="text-sm font-medium">Temperature</p>
                           <p className="text-xs text-muted-foreground">
-                            {agent.config?.temperature ?? "—"}
+                            {agent.config?.temperature ?? '—'}
                           </p>
                         </div>
                       </div>
@@ -459,11 +475,7 @@ export default function TaskDetailPage() {
                         <p className="mb-2 text-sm font-medium">Capabilities</p>
                         <div className="flex flex-wrap gap-2">
                           {(agent.capabilities ?? []).map((tool: string) => (
-                            <Badge
-                              key={tool}
-                              variant="outline"
-                              className="text-xs"
-                            >
+                            <Badge key={tool} variant="outline" className="text-xs">
                               {tool}
                             </Badge>
                           ))}
@@ -477,40 +489,32 @@ export default function TaskDetailPage() {
                   <Card className="p-6">
                     <div className="mb-4 flex items-center gap-2">
                       <Database className="size-5 text-primary" />
-                      <h2 className="text-lg font-semibold">
-                        Agent Memory
-                      </h2>{" "}
-                      {/*  IN PROGRESS */}
+                      <h2 className="text-lg font-semibold">Agent Memory</h2> {/*  IN PROGRESS */}
                     </div>
 
                     <div className="space-y-3">
-                      {agent.memory.map(
-                        (item: AgentMemoryItem, index: number) => (
-                          <Card
-                            key={`${item.createdAt}-${index}`}
-                            className="bg-muted/30 p-3"
-                          >
-                            <div className="mb-1 flex items-center gap-2">
-                              <Badge
-                                variant="outline"
-                                className={
-                                  item.type === "system"
-                                    ? "bg-primary/20 text-primary border-primary/30"
-                                    : "bg-success/20 text-success border-success/30"
-                                }
-                              >
-                                {item.type}
-                              </Badge>
+                      {agent.memory.map((item: AgentMemoryItem, index: number) => (
+                        <Card key={`${item.createdAt}-${index}`} className="bg-muted/30 p-3">
+                          <div className="mb-1 flex items-center gap-2">
+                            <Badge
+                              variant="outline"
+                              className={
+                                item.type === 'system'
+                                  ? 'bg-primary/20 text-primary border-primary/30'
+                                  : 'bg-success/20 text-success border-success/30'
+                              }
+                            >
+                              {item.type}
+                            </Badge>
 
-                              <span className="text-xs text-muted-foreground">
-                                {new Date(item.createdAt).toLocaleString()}
-                              </span>
-                            </div>
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(item.createdAt).toLocaleString()}
+                            </span>
+                          </div>
 
-                            <p className="text-xs">{item.content}</p>
-                          </Card>
-                        ),
-                      )}
+                          <p className="text-xs">{item.content}</p>
+                        </Card>
+                      ))}
                     </div>
                   </Card>
                 )}

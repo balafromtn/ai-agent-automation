@@ -103,6 +103,7 @@ async function runWorkerLoop() {
       const now = new Date();
       const context = {
         ...(task.input || {}),
+        input: task.input || {},
         timestampIso: now.toISOString(),
         timestamp: now.toLocaleString('en-US', {
           dateStyle: 'long',
