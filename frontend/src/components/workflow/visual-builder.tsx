@@ -53,6 +53,10 @@ function getNodeColor(type: string) {
       return '#16a34a'; // green
     case 'Delay':
       return '#6b7280'; // gray
+    case 'Parallel':
+      return '#ec4899'; // pink
+    case 'Join':
+      return '#8b5cf6'; // violet
     default:
       return '#374151';
   }
@@ -104,7 +108,6 @@ function buildNodePreview(
 
   if (step.type === 'Condition') {
     const trueEdge = edges.find((e) => e.source === step.id && e.condition === 'true');
-
     const falseEdge = edges.find((e) => e.source === step.id && e.condition === 'false');
 
     const trueStep = allSteps.find((s) => s.id === trueEdge?.target);
@@ -116,17 +119,25 @@ function buildNodePreview(
 
   if (step.type === 'Switch') {
     const outgoing = edges.filter((e) => e.source === step.id);
-
     outgoing.forEach((edge) => {
-      const e = edge;
-
-      const targetStep = allSteps.find((s) => s.id === e.target);
-
+      const targetStep = allSteps.find((s) => s.id === edge.target);
       rows.push({
-        name: e.caseValue || 'case',
+        name: edge.caseValue || 'case',
         type: targetStep?.name || '?',
       });
     });
+  }
+
+  if (step.type === 'Parallel') {
+    rows.push({ name: 'strategy', type: step.failureStrategy || 'fail-fast' });
+    const outEdges = edges.filter((e) => e.source === step.id);
+    rows.push({ name: 'branches', type: `${outEdges.length}` });
+  }
+
+  if (step.type === 'Join') {
+    const inEdges = edges.filter((e) => e.target === step.id);
+    rows.push({ name: 'merging', type: `${inEdges.length} sources` });
+    rows.push({ name: 'output', type: '{{parallel.results}}' });
   }
 
   return rows;
@@ -302,10 +313,8 @@ export default function VisualBuilder({
           activeSelectedNodes.some((node) => node.id === s.id)
         );
 
-        // Run safe cloning engine to grab brand new IDs and the mapping translation lookup
         const { clonedSteps, idMap } = duplicateNodesSafely(stepsToDuplicate);
 
-        // OPTIONAL ENHANCEMENT: Extract and replicate edges that connect the highlighted elements
         const internalEdgesToDuplicate = flowEdges.filter(
           (edge) =>
             activeSelectedNodes.some((n) => n.id === edge.source) &&
@@ -335,7 +344,7 @@ export default function VisualBuilder({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [nodes, steps, flowEdges, setSteps]);
 
-  /* ---------- KEYBOARD SHORTCUTS: Save / Delete / Undo / Redo ---------- */
+  /* ---------- KEYBOARD SHORTCUTS ---------- */
   useEffect(() => {
     const isInputFocused = () => {
       const el = document.activeElement;
@@ -459,6 +468,7 @@ export default function VisualBuilder({
 
       const isCondition = sourceStep?.type === 'Condition';
       const isSwitch = sourceStep?.type === 'Switch';
+      const isParallel = sourceStep?.type === 'Parallel'; // Allow infinite outbound connections naturally without prompt
 
       let condition: 'true' | 'false' | null = null;
       let caseValue: string | null = null;
@@ -495,11 +505,13 @@ export default function VisualBuilder({
 
         caseValue = value;
       }
+
       historyRef.current.push({
         steps: [...steps],
         edges: [...flowEdges] as unknown as WorkflowEdge[],
       });
       futureRef.current = [];
+
       setFlowEdges((eds) => {
         let filtered = eds;
 
@@ -513,14 +525,15 @@ export default function VisualBuilder({
           );
         }
 
+        // Parallel doesn't need to filter anything because it can have multiple branches
         const newEdge: WorkflowEdge = {
-          id: generateEdgeId(), // ✅ Guaranteed distinct execution keys
+          id: generateEdgeId(),
           ...params,
           source: params.source ?? '',
           target: params.target ?? '',
           animated: true,
           style: EDGE_STYLE,
-          label: caseValue || condition?.toUpperCase() || '',
+          label: isParallel ? 'Branch' : (caseValue || condition?.toUpperCase() || ''),
           condition: condition ?? undefined,
           caseValue: caseValue ?? undefined,
         };
@@ -833,19 +846,54 @@ export default function VisualBuilder({
                 <option value="" disabled>
                   Select step type
                 </option>
-                <option value="LLM">LLM</option>
-                <option value="HTTP">HTTP</option>
-                <option value="Delay">Delay</option>
-                <option value="Tool">Tool</option>
-                <option value="MCP">MCP</option>
-                <option value="Document">Document</option>
-                <option value="Condition">Condition</option>
-                <option value="Switch">Switch</option>
-                <option value="GitHub">GitHub</option>
-                <option value="Slack">Slack</option>
-                <option value="Discord">Discord</option>
+                <optgroup label="Logic">
+                  <option value="LLM">LLM</option>
+                  <option value="HTTP">HTTP</option>
+                  <option value="Delay">Delay</option>
+                  <option value="Condition">Condition</option>
+                  <option value="Switch">Switch</option>
+                  <option value="Parallel">Parallel</option>
+                  <option value="Join">Join</option>
+                </optgroup>
+                <optgroup label="Integrations">
+                  <option value="Tool">Tool</option>
+                  <option value="MCP">MCP</option>
+                  <option value="Document">Document</option>
+                  <option value="GitHub">GitHub</option>
+                  <option value="Slack">Slack</option>
+                  <option value="Discord">Discord</option>
+                </optgroup>
               </select>
             </div>
+
+            {selectedStep.type === 'Parallel' && (
+              <>
+                <div className="rounded-lg border border-muted p-3 text-xs text-muted-foreground">
+                  Connect multiple outgoing branches. Branches will execute simultaneously.
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Failure Strategy</label>
+                  <select
+                    className="w-full border rounded-lg px-3 py-2 mt-1 bg-background"
+                    value={selectedStep.failureStrategy || 'fail-fast'}
+                    onChange={(e) =>
+                      updateStep(selectedStep.id, {
+                        failureStrategy: e.target.value as "fail-fast" | "continue-on-error",
+                      })
+                    }
+                  >
+                    <option value="fail-fast">Fail Fast (Abort all if one fails)</option>
+                    <option value="continue-on-error">Continue On Error</option>
+                  </select>
+                </div>
+              </>
+            )}
+
+            {selectedStep.type === 'Join' && (
+              <div className="rounded-lg border border-muted p-3 text-xs text-muted-foreground">
+                Connect multiple incoming branches to this node. It will wait for all branches to finish before passing their merged payload (as an array) to the next step.
+              </div>
+            )}
 
             {selectedStep.type === 'LLM' && (
               <>

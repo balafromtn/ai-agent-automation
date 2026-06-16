@@ -201,9 +201,13 @@ export default function WorkflowBuilderPage() {
                           ? 'Slack'
                           : s.type === 'discord'
                             ? 'Discord'
-                            : s.type === 'file' || s.type === 'email' || s.type === 'browser'
-                              ? 'Tool'
-                              : 'LLM',
+                            : s.type === 'parallel'
+                              ? 'Parallel'
+                              : s.type === 'join'
+                                ? 'Join'
+                                : s.type === 'file' || s.type === 'email' || s.type === 'browser'
+                                  ? 'Tool'
+                                  : 'LLM',
 
         position: s.position || { x: 0, y: 0 },
         useMemory: s.useMemory ?? false,
@@ -534,6 +538,24 @@ export default function WorkflowBuilderPage() {
             content: s.content ?? '',
           };
         }
+        if (s.type === 'Parallel') {
+          return {
+            stepId: s.id,
+            name: s.name,
+            position: s.position,
+            type: 'parallel',
+            failureStrategy: s.failureStrategy ?? 'fail-fast'
+          };
+        }
+        if (s.type === 'Join') {
+          return {
+            stepId: s.id,
+            name: s.name,
+            position: s.position,
+            type: 'join'
+          };
+        }
+
         // fallback (should never hit)
         return {
           stepId: s.id,

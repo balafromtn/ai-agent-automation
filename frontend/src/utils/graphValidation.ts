@@ -35,6 +35,10 @@ export const normalizeStepType = (type?: string): string => {
       return 'Slack';
     case 'discord':
       return 'Discord';
+    case 'parallel':
+      return 'Parallel';
+    case 'join':
+      return 'Join';
     default:
       return type.charAt(0).toUpperCase() + type.slice(1);
   }
@@ -279,6 +283,22 @@ export const validateGraph = (nodes: WorkflowNode[], edges: WorkflowEdge[]): Val
           invalidNodes.add(node.id);
         }
       });
+    }
+
+    if (normalizedType === 'Parallel') {
+      const outEdges = (edges || []).filter((e) => e.source === node.id);
+      if (outEdges.length < 2) {
+        errors.push(`Step Validation: Parallel step '${stepName}' requires at least two outgoing branches.`);
+        invalidNodes.add(node.id);
+      }
+    }
+
+    if (normalizedType === 'Join') {
+      const inEdges = (edges || []).filter((e) => e.target === node.id);
+      if (inEdges.length < 2) {
+        errors.push(`Step Validation: Join step '${stepName}' requires at least two incoming branches to merge.`);
+        invalidNodes.add(node.id);
+      }
     }
   });
 
