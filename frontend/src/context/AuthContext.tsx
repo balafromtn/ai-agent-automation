@@ -41,29 +41,13 @@ function isTokenExpired(jwt: string) {
 export default function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
 
-  const [token, setToken] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const saved = localStorage.getItem('token');
-    return saved && !isTokenExpired(saved) ? saved : null;
-  });
-
-  const [user, setUser] = useState<AuthUser | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const saved = localStorage.getItem('token');
-    if (!saved || isTokenExpired(saved)) return null;
-    const payload = decodeJwt(saved);
-    if (!payload) return null;
-    return {
-      id: payload.sub,
-      email: payload.email,
-      name: payload.name,
-    };
-  });
-
-  const [loading, setLoading] = useState(false);
+  const [token, setToken] = useState<string | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const hydrateUser = useCallback((jwt: string) => {
     const payload = decodeJwt(jwt);
+
     if (!payload) {
       setUser(null);
       return;
@@ -84,12 +68,31 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
   }, [router]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const saved = localStorage.getItem('token');
-    if (saved && isTokenExpired(saved)) {
-      localStorage.removeItem('token');
-    }
-  }, []);
+    let active = true;
+
+    queueMicrotask(() => {
+      if (!active) return;
+
+      const saved = localStorage.getItem('token');
+
+      if (saved && isTokenExpired(saved)) {
+        localStorage.removeItem('token');
+        setLoading(false);
+        return;
+      }
+
+      if (saved) {
+        setToken(saved);
+        hydrateUser(saved);
+      }
+
+      setLoading(false);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [hydrateUser]);
 
   /* ---- Auto logout on token expiry (CRITICAL) ---- */
   useEffect(() => {

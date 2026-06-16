@@ -12,6 +12,8 @@ export type StepType =
   | "GitHub"
   | "Slack"
   | "Discord"
+  | "Parallel"
+  | "Join"
   | "Approval";
 
 export type ToolType = "email" | "file" | "browser";
@@ -24,6 +26,9 @@ export interface WorkflowNode {
     x: number;
     y: number;
   };
+
+  // Parallel Execution
+  failureStrategy?: "fail-fast" | "continue-on-error";
 
   // LLM
   useMemory?: boolean;
@@ -89,7 +94,6 @@ export interface WorkflowNode {
 
   // Approval
   approvalMessage?: string;
-  message?: string;
 }
 
 export interface BackendStep {
@@ -113,12 +117,19 @@ export interface BackendStep {
     | "github"
     | "slack"
     | "discord"
+    | "parallel"
+    | "join"
+    | "Parallel"
+    | "Join"
     | "approval";
 
   position?: {
     x: number;
     y: number;
   };
+  
+  failureStrategy?: "fail-fast" | "continue-on-error";
+  
   useMemory?: boolean;
   memoryTopK?: number;
   prompt?: string;
@@ -158,7 +169,6 @@ export interface BackendStep {
     target: string;
   }[];
   defaultTarget?: string;
-  approvalMessage?: string;
 }
 
 export interface WorkflowEdge {

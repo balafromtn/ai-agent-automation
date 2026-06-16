@@ -1,14 +1,40 @@
 const pdf = require('pdf-parse');
 const multer = require('multer');
+const mongoose = require('mongoose');
 
 const Document = require('../models/document.model');
 const DocumentChunk = require('../models/documentChunk.model');
 const SystemSettings = require('../models/systemSettings.model');
 
-const { processDocument, queryDocument } = require('../services/documentService');
+const { processDocument, queryDocuments } = require('../services/documentService');
 const { runLLM } = require('../agents/llmAdapter');
 
 const upload = multer({ storage: multer.memoryStorage() });
+const MAX_SELECTED_DOCUMENTS = 10;
+const MAX_RAG_CONTEXT_CHARS = 12000;
+const DOCUMENT_PROCESSING_TIMEOUT_MS = 2 * 60 * 1000;
+
+function safeProcessingError(error) {
+  if (!error) return 'Document processing failed';
+
+  const message = error instanceof Error ? error.message : String(error);
+
+  return message.slice(0, 500) || 'Document processing failed';
+}
+
+function withTimeout(promise, timeoutMs) {
+  let timeoutId;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error('Document processing timed out'));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
 
 /* -----------------------------
    Upload Document
@@ -65,6 +91,12 @@ async function uploadDocument(req, res) {
       title: file.originalname,
       fileType: extension,
       size: file.size,
+      status: 'processing',
+      processingStartedAt: new Date(),
+      processingStep: 'Queued',
+      processedChunks: 0,
+      totalChunks: 0,
+      processingError: undefined,
     });
 
     /* ---------- Process document (chunk + embed) ---------- */
@@ -82,7 +114,22 @@ async function uploadDocument(req, res) {
 
     const agent = { config: { provider } };
 
-    await processDocument(agent, document, text);
+    try {
+      await Document.findByIdAndUpdate(document._id, {
+        processingStep: 'Extracting text',
+      });
+
+      await withTimeout(processDocument(agent, document, text), DOCUMENT_PROCESSING_TIMEOUT_MS);
+    } catch (processingError) {
+      await Document.findByIdAndUpdate(document._id, {
+        status: 'failed',
+        processingStep: 'Failed',
+        processingError: safeProcessingError(processingError),
+        processedAt: new Date(),
+      });
+
+      throw processingError;
+    }
 
     res.json({
       ok: true,
@@ -119,7 +166,83 @@ async function listDocuments(req, res) {
 
 async function chatWithDocument(req, res) {
   try {
-    const { documentId, question } = req.body;
+    const { documentId, documentIds, question } = req.body;
+
+    if (typeof question !== 'string' || !question.trim()) {
+      return res.status(400).json({
+        ok: false,
+        error: 'question_required',
+      });
+    }
+
+    const requestedDocumentIds = Array.isArray(documentIds) ? documentIds : [documentId];
+
+    const selectedDocumentIds = [
+      ...new Set(requestedDocumentIds.filter(Boolean).map((id) => id.toString())),
+    ];
+
+    if (!selectedDocumentIds.length) {
+      return res.status(400).json({
+        ok: false,
+        error: 'document_required',
+      });
+    }
+
+    if (selectedDocumentIds.length > MAX_SELECTED_DOCUMENTS) {
+      return res.status(400).json({
+        ok: false,
+        error: 'too_many_documents',
+      });
+    }
+
+    const hasInvalidDocumentId = selectedDocumentIds.some(
+      (id) => !mongoose.Types.ObjectId.isValid(id)
+    );
+
+    if (hasInvalidDocumentId) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_document_id',
+      });
+    }
+
+    const documents = await Document.find({
+      _id: { $in: selectedDocumentIds },
+      userId: req.user._id,
+    }).lean();
+
+    if (documents.length !== selectedDocumentIds.length) {
+      return res.status(404).json({
+        ok: false,
+        error: 'Document not found',
+      });
+    }
+
+    const hasFailedDocument = documents.some((document) => document.status === 'failed');
+
+    if (hasFailedDocument) {
+      return res.status(400).json({
+        ok: false,
+        error: 'document_processing_failed',
+      });
+    }
+
+    const hasNonReadyDocument = documents.some((document) => document.status !== 'ready');
+
+    if (hasNonReadyDocument) {
+      return res.status(400).json({
+        ok: false,
+        error: 'document_not_ready',
+      });
+    }
+
+    const trimmedQuestion = question.trim();
+    const documentTitleById = new Map(
+      documents.map((document) => [
+        document._id.toString(),
+        document.title || document.name || 'Untitled document',
+      ])
+    );
 
     /* ---------- Load user settings ---------- */
 
@@ -138,42 +261,106 @@ async function chatWithDocument(req, res) {
 
     /* ---------- Query vector store ---------- */
 
-    const chunks = await queryDocument(agent, req.user._id, documentId, question, topK);
+    const chunks = await queryDocuments(
+      agent,
+      req.user._id,
+      selectedDocumentIds,
+      trimmedQuestion,
+      topK
+    );
 
-    const context = chunks.map((c) => c.content).join('\n\n');
+    if (!chunks.length) {
+      return res.json({
+        ok: true,
+        answer: 'I could not find relevant information in the selected document(s).',
+        sources: [],
+        documentIds: selectedDocumentIds,
+      });
+    }
+
+    const enrichedChunks = chunks.map((chunk) => {
+      const chunkDocumentId = chunk.documentId.toString();
+
+      return {
+        _id: chunk._id,
+        documentId: chunkDocumentId,
+        title: documentTitleById.get(chunkDocumentId) || 'Untitled document',
+        chunkIndex: chunk.chunkIndex,
+        score: chunk.score,
+        content: chunk.content,
+      };
+    });
+
+    const contextBlocks = [];
+    const includedChunks = [];
+    let contextLength = 0;
+
+    for (const chunk of enrichedChunks) {
+      const separator = contextBlocks.length ? '\n\n---\n\n' : '';
+      const header = `[${chunk.title}]
+Chunk ${chunk.chunkIndex}
+`;
+      let content = chunk.content || '';
+      let block = `${header}${content}`;
+      let nextLength = contextLength + separator.length + block.length;
+
+      if (nextLength > MAX_RAG_CONTEXT_CHARS) {
+        if (contextBlocks.length > 0) {
+          break;
+        }
+
+        // If the top chunk alone is too large, include a truncated version within the context budget.
+        const availableContentLength = Math.max(
+          MAX_RAG_CONTEXT_CHARS - separator.length - header.length,
+          0
+        );
+
+        content = content.slice(0, availableContentLength).trim();
+        block = `${header}${content}`;
+        nextLength = contextLength + separator.length + block.length;
+      }
+
+      contextBlocks.push(`${separator}${block}`);
+      includedChunks.push({
+        ...chunk,
+        content,
+      });
+      contextLength = nextLength;
+    }
+
+    const context = contextBlocks.join('');
+
+    const seenSources = new Set();
+    const sources = includedChunks
+      .filter((chunk) => {
+        const sourceKey = chunk._id
+          ? chunk._id.toString()
+          : `${chunk.documentId}:${chunk.chunkIndex}`;
+
+        if (seenSources.has(sourceKey)) {
+          return false;
+        }
+
+        seenSources.add(sourceKey);
+        return true;
+      })
+      .map((chunk) => ({
+        documentId: chunk.documentId,
+        title: chunk.title,
+        chunkIndex: chunk.chunkIndex,
+        score: typeof chunk.score === 'number' ? Number(chunk.score.toFixed(4)) : chunk.score,
+      }));
 
     const prompt = `
-You are an advanced document analysis assistant.
+You are analyzing one or more selected documents using only the provided context.
 
-Your task is to answer questions using ONLY the provided document content.
+Answer only from the context. If the answer is not present, say you could not find the information in the selected document(s).
 
-The document may originate from:
+When multiple documents are relevant, synthesize across them and use document names naturally when comparing or attributing claims.
 
-* PDF
-* CSV
-* Excel spreadsheets
-* TXT files
-* Markdown files
-* JSON files
-* Log files
-* Reports
-* Tables
-* Database exports
-* Configuration files
-* Mixed structured and unstructured content
+Do not invent information or rely on knowledge outside the context.
 
----
-
-## STEP 1: UNDERSTAND THE DOCUMENT
-
-Before answering, determine:
-
-* Document type
-* Overall purpose
-* Main topics
-* Structure of the content
-
-Examples:
+The context may contain structured data such as CSV rows or tables.
 
 CSV:
 
@@ -230,162 +417,11 @@ Provide:
 
 Never answer:
 
-"I could not find this information in the document."
-
-for these document-level questions.
-
----
-
-## STEP 3: HANDLE SEARCH QUESTIONS
-
-Answer questions using information found in the document.
-
-Examples:
-
-* Who is listed?
-* What companies appear?
-* What is the total?
-* What errors occurred?
-* What settings are configured?
-
-Extract the relevant information directly from the document.
-
----
-
-## STEP 4: HANDLE TABLES AND CSV DATA
-
-When the document contains tabular data:
-
-* Identify headers
-* Understand column meanings
-* Treat each row as a record
-
-Example:
-
-Name,Role,Company
-
-John,Developer,OpenAI
-
-means:
-
-Name = John
-Role = Developer
-Company = OpenAI
-
-Use this structure when answering questions.
-
----
-
-## STEP 5: HANDLE JSON FILES
-
-When the document contains JSON:
-
-* Understand nested objects
-* Understand arrays
-* Understand relationships between keys
-
-Provide human-readable explanations.
-
-Example:
-
-{
-"name": "John",
-"role": "Developer"
-}
-
-Answer:
-
-John's role is Developer.
-
----
-
-## STEP 6: HANDLE MARKDOWN FILES
-
-Use headings and document structure.
-
-Understand:
-
-* Titles
-* Sections
-* Bullet lists
-* Tables
-* Code blocks
-
-Answer based on the logical structure of the document.
-
----
-
-## STEP 7: HANDLE CODE FILES
-
-If the document contains source code:
-
-* Explain functionality
-* Identify classes
-* Identify functions
-* Identify APIs
-* Explain architecture when asked
-
-Do not invent behavior that is not present.
-
----
-
-## STEP 8: HANDLE LIST QUESTIONS
-
-If the user asks:
-
-* List all
-* Show all
-* Give every
-* Find all entries
-
-Return every matching result found in the document.
-
-Do not stop after the first match.
-
----
-
-## STEP 9: HANDLE AMBIGUOUS QUESTIONS
-
-If a question uses vague references such as:
-
-* this
-* that
-* it
-* these
-* those
-
-Infer the most likely meaning from:
-
-1. The document content
-2. The document structure
-3. The conversation context
-
-If the meaning is still unclear, explain the most likely interpretation instead of immediately claiming the information is missing.
-
----
-
-## STEP 10: TRUTHFULNESS
-
-Use only information present in the document.
-
-Do not invent facts.
-
-If the requested information genuinely does not exist in the document, respond:
-
-"I could not find that information in the document."
-
----
-
-## DOCUMENT CONTENT
-
+CONTEXT:
 ${context}
 
----
-
-## USER QUESTION
-
-${question}
-
+QUESTION:
+${trimmedQuestion}
 `;
 
     /* ---------- Run LLM ---------- */
@@ -399,6 +435,8 @@ ${question}
     res.json({
       ok: true,
       answer: llm.text,
+      sources,
+      documentIds: selectedDocumentIds,
     });
   } catch (err) {
     console.error('Document query error:', err);

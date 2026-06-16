@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   Workflow,
@@ -12,23 +12,25 @@ import {
   ChevronLeft,
   Menu,
   X,
-} from "lucide-react";
-import { UserProfileMenu } from "@/components/user-profile-menu";
-import { cn } from "@/lib/utils";
-import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useState, useRef, startTransition } from "react";
-import { Brain, FileText } from "lucide-react";
-import { ReportIssueDialog } from "@/components/report-issue-dialog";
+  FlaskConical,
+} from 'lucide-react';
+import { UserProfileMenu } from '@/components/user-profile-menu';
+import { cn } from '@/lib/utils';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useEffect, useState, useRef, startTransition } from 'react';
+import { Brain, FileText } from 'lucide-react';
+import { ReportIssueDialog } from '@/components/report-issue-dialog';
 
 const navItems = [
-  { name: "Dashboard", href: "/", icon: LayoutDashboard },
-  { name: "Workflows", href: "/workflows", icon: Workflow },
-  { name: "Schedules", href: "/schedules", icon: Clock12 },
-  { name: "Tasks", href: "/tasks", icon: ListChecks },
-  { name: "Agents", href: "/agents", icon: Bot },
-  { name: "Documents", href: "/documents", icon: FileText },
-  { name: "Memory", href: "/memory", icon: Brain },
-  { name: "Logs", href: "/logs", icon: ScrollText },
+  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Workflows', href: '/workflows', icon: Workflow },
+  { name: 'Schedules', href: '/schedules', icon: Clock12 },
+  { name: 'Tasks', href: '/tasks', icon: ListChecks },
+  { name: 'Agents', href: '/agents', icon: Bot },
+  { name: 'Agent Playground', href: '/playground', icon: FlaskConical },
+  { name: 'Documents', href: '/documents', icon: FileText },
+  { name: 'Memory', href: '/memory', icon: Brain },
+  { name: 'Logs', href: '/logs', icon: ScrollText },
 ];
 
 const SIDEBAR_EXPANDED = 256;
@@ -76,12 +78,7 @@ function SidebarContent({
           onClick={onCollapse}
           className="hidden md:flex rounded-md p-1.5 text-sidebar-foreground/70 hover:bg-sidebar-accent"
         >
-          <ChevronLeft
-            className={cn(
-              "size-4 transition-transform",
-              collapsed && "rotate-180",
-            )}
-          />
+          <ChevronLeft className={cn('size-4 transition-transform', collapsed && 'rotate-180')} />
         </button>
 
         {/* Mobile close button */}
@@ -97,18 +94,17 @@ function SidebarContent({
       <nav className="flex-1 space-y-1 p-2">
         {navItems.map((item) => {
           const isActive =
-            pathname === item.href ||
-            (item.href !== "/" && pathname.startsWith(item.href));
+            pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
 
           return (
             <Link
               key={item.href}
               href={item.href}
               className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                 isActive
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
+                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                  : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
               )}
             >
               <item.icon className="size-4 shrink-0" />
@@ -150,12 +146,12 @@ export function AppSidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathnameRef = useRef(pathname);
-  
+
   /* Sync layout padding for desktop */
   useEffect(() => {
     document.documentElement.style.setProperty(
-      "--sidebar-width",
-      collapsed ? `${SIDEBAR_COLLAPSED}px` : `${SIDEBAR_EXPANDED}px`,
+      '--sidebar-width',
+      collapsed ? `${SIDEBAR_COLLAPSED}px` : `${SIDEBAR_EXPANDED}px`
     );
   }, [collapsed]);
 
@@ -197,7 +193,7 @@ export function AppSidebar() {
             initial={{ x: -SIDEBAR_EXPANDED }}
             animate={{ x: 0 }}
             exit={{ x: -SIDEBAR_EXPANDED }}
-            transition={{ duration: 0.25, ease: "easeInOut" }}
+            transition={{ duration: 0.25, ease: 'easeInOut' }}
             className="md:hidden fixed left-0 top-0 z-40 h-screen w-64 border-r border-border bg-sidebar"
           >
             <SidebarContent
@@ -213,7 +209,7 @@ export function AppSidebar() {
       {/* Desktop sidebar */}
       <motion.aside
         animate={{ width: collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED }}
-        transition={{ duration: 0.25, ease: "easeInOut" }}
+        transition={{ duration: 0.25, ease: 'easeInOut' }}
         className="hidden md:block fixed left-0 top-0 z-30 h-screen border-r border-border bg-sidebar"
       >
         <SidebarContent

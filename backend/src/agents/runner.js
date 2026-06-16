@@ -1,14 +1,13 @@
-const { writeLog } = require("./logger");
-const mongoose = require("mongoose");
-const Task = require("../models/task.model");
-const Workflow = require("../models/workflow.model");
-const SystemSettings = require("../models/systemSettings.model");
-const { claimNextTask, completeTask } = require("./queueService");
-const { executeStep } = require("./executor");
-const telemetryService = require("../services/telemetry.service");
-const WORKER_ID = process.env.WORKER_ID || "agent-1";
-const EventEmitter = require("events");
-require("dotenv").config();
+const { writeLog } = require('./logger');
+const mongoose = require('mongoose');
+const Task = require('../models/task.model');
+const Workflow = require('../models/workflow.model');
+const SystemSettings = require('../models/systemSettings.model');
+const { claimNextTask, completeTask } = require('./queueService');
+const { executeStep } = require('./executor');
+const telemetryService = require('../services/telemetry.service');
+const WORKER_ID = process.env.WORKER_ID || 'agent-1';
+require('dotenv').config();
 
 /* -------------------------
    Settings cache
@@ -35,10 +34,7 @@ function sleep(ms) {
 async function getGlobalWorkerSettings() {
   const now = Date.now();
 
-  if (
-    cachedWorkerSettings &&
-    now - lastSettingsFetch < SETTINGS_REFRESH_MS
-  ) {
+  if (cachedWorkerSettings && now - lastSettingsFetch < SETTINGS_REFRESH_MS) {
     return cachedWorkerSettings;
   }
 
@@ -48,10 +44,9 @@ async function getGlobalWorkerSettings() {
     cachedWorkerSettings = settings?.worker || SAFE_FALLBACK_SETTINGS;
     lastSettingsFetch = now;
 
-    // console.log("🔁 Worker settings loaded:", cachedWorkerSettings);
     return cachedWorkerSettings;
   } catch (err) {
-    console.error("⚠️ Failed to load worker settings:", err.message);
+    console.error('⚠️ Failed to load worker settings:', err.message);
     return SAFE_FALLBACK_SETTINGS;
   }
 }
@@ -60,372 +55,397 @@ async function getGlobalWorkerSettings() {
    Worker loop
 ------------------------- */
 let isRunningLoop = false;
-let activeThreadsCount = 0;
-const workerEvents = new EventEmitter();
-
-async function executeSingleTask(task) {
-  try {
-    console.log(`📝 Task claimed: ${task._id}`);
-    writeLog("Task claimed", "info", {
-      workerId: WORKER_ID,
-      taskId: task._id,
-      workflowId: task.workflowId,
-    });
-
-    const workflow = task.workflowId
-      ? await Workflow.findById(task.workflowId).lean()
-      : null;
-
-    let agent = null;
-
-    if (workflow?.agentId) {
-      const Agent = require("../models/agent.model");
-      agent = await Agent.findById(workflow.agentId).lean();
-    }
-
-    const now = new Date();
-    const context = {
-      ...(task.input || {}),
-      timestampIso: now.toISOString(),
-      timestamp: now.toLocaleString("en-US", {
-        dateStyle: "long",
-        timeStyle: "short",
-      }),
-      date: now.toLocaleDateString("en-US", { dateStyle: "long" }),
-      time: now.toLocaleTimeString("en-US", { timeStyle: "short" }),
-      workflow,
-      taskId: task._id,
-      userId: task.userId,
-      results: [],
-    };
-
-    // -------------------------
-    // Resolve steps
-    // -------------------------
-    const steps =
-      Array.isArray(task.steps) && task.steps.length > 0
-        ? task.steps
-        : Array.isArray(task.metadata?.steps) && task.metadata.steps.length > 0
-          ? task.metadata.steps
-          : Array.isArray(workflow?.metadata?.steps)
-            ? workflow.metadata.steps
-            : [];
-
-    const edges =
-      Array.isArray(task.metadata?.edges) && task.metadata.edges.length > 0
-        ? task.metadata.edges
-        : Array.isArray(workflow?.metadata?.edges)
-          ? workflow.metadata.edges
-          : [];
-    let success = true;
-
-    if (steps.length > 0) {
-      console.log(`⚙️ Executing ${steps.length} steps…`);
-      writeLog(`Executing ${steps.length} steps`, "info", {
-        workerId: WORKER_ID,
-        taskId: task._id,
-        workflowId: task.workflowId,
-      });
-
-      function getStepId(step) {
-        return step.stepId || step.id || step.name;
-      }
-
-      const stepsMap = {};
-      steps.forEach((s) => {
-        stepsMap[getStepId(s)] = s;
-      });
-
-      // find start node (no incoming edges)
-      const targetSet = new Set(edges.map((e) => e.target));
-      let currentStep = steps.find((s) => !targetSet.has(getStepId(s)));
-
-      let visited = new Set();
-
-      let stepCount = 0;
-      const MAX_STEPS = 50;
-
-      // ── HITL RESUME: If task was previously paused at an approval node,
-      // skip steps that were already executed and rebuild context.
-      const alreadyExecutedStepIds = new Set(
-        (task.stepResults || []).map((r) => r.stepId)
-      );
-      const isResuming = !!task.pausedAtStepId;
-
-      if (isResuming) {
-        console.log(`🔄 Resuming task ${task._id} from approval at step ${task.pausedAtStepId}`);
-        // Rebuild context.results from stored stepResults
-        for (const prevResult of (task.stepResults || [])) {
-          context.results.push(prevResult);
-          context.last = {
-            input: prevResult.input,
-            output: prevResult.output,
-          };
-        }
-      }
-
-      while (currentStep && stepCount < MAX_STEPS) {
-        stepCount++;
-        if (stepCount >= MAX_STEPS) {
-          console.warn("⚠️ Max steps reached, stopping execution");
-          success = false;
-        }
-
-        visited.add(getStepId(currentStep));
-
-        // ── HITL RESUME: Skip steps already executed before approval pause ──
-        if (isResuming && alreadyExecutedStepIds.has(getStepId(currentStep))) {
-          // Find next step (same logic as end of loop) and skip
-          let nextEdge = null;
-          if (currentStep.type === "condition") {
-            const prevResult = (task.stepResults || []).find(r => r.stepId === getStepId(currentStep));
-            nextEdge = edges.find(e => e.source === getStepId(currentStep) && e.condition === prevResult?.branch);
-          } else if (currentStep.type === "switch") {
-            const prevResult = (task.stepResults || []).find(r => r.stepId === getStepId(currentStep));
-            const normalize = (v) => String(v || "").toLowerCase().trim();
-            const value = normalize(prevResult?.caseValue);
-            nextEdge = edges.find(e => e.source === getStepId(currentStep) && normalize(e.caseValue) && value.includes(normalize(e.caseValue)));
-            if (!nextEdge) nextEdge = edges.find(e => e.source === getStepId(currentStep) && !e.caseValue);
-          } else {
-            nextEdge = edges.find(e => e.source === getStepId(currentStep));
-          }
-          if (!nextEdge) break;
-          currentStep = stepsMap[nextEdge.target];
-          continue;
-        }
-
-        // ⏱️ Measure individual step execution duration
-        const stepStart = Date.now();
-        const result = await executeStep(currentStep, context, agent);
-        const stepDurationMs = Date.now() - stepStart;
-
-        // 🔥 attach debug info and telemetry directly to result
-        result.name = currentStep.name;
-        result.type = currentStep.type;
-        result.durationMs = stepDurationMs;
-
-        await Task.findByIdAndUpdate(task._id, {
-          $push: { stepResults: result },
-        });
-
-        context.results.push(result);
-        context.last = {
-          input: result.input,
-          output: result.output,
-        };
-
-        if (!result.success) {
-          success = false;
-          break;
-        }
-
-        // ── HITL: Pause execution if this step requires human approval ──
-        if (result.requiresApproval) {
-          await Task.findByIdAndUpdate(task._id, {
-            $set: {
-              status: "pending_approval",
-              pausedAtStepId: getStepId(currentStep),
-              approval: {
-                stepId: getStepId(currentStep),
-                requestedAt: new Date(),
-              },
-            },
-          });
-          console.log(`⏸️ Task ${task._id} paused for approval at step ${getStepId(currentStep)}`);
-          writeLog("Task paused for approval", "info", {
-            workerId: WORKER_ID,
-            taskId: task._id,
-            stepId: getStepId(currentStep),
-          });
-          return; // exit without calling completeTask
-        }
-
-        // 🔥 FIND NEXT STEP USING EDGES
-        let nextEdge = null;
-
-        // ✅ CONDITION
-        if (currentStep.type === "condition") {
-          const branch = result.branch;
-
-          nextEdge = edges.find(
-            (e) =>
-              e.source === getStepId(currentStep) &&
-              e.condition === branch
-          );
-        }
-
-        // ✅ SWITCH
-        else if (currentStep.type === "switch") {
-          const normalize = (v) =>
-            String(v || "").toLowerCase().trim();
-
-          const value = normalize(result.caseValue);
-
-          nextEdge = edges.find((e) => {
-            if (e.source !== getStepId(currentStep)) return false;
-
-            const edgeValue = normalize(e.caseValue);
-
-            return value.includes(edgeValue); // 🔥 FIX
-          });
-
-          console.log("🔀 SWITCH DEBUG:", {
-            resultValue: value,
-            availableEdges: edges
-              .filter(e => e.source === getStepId(currentStep))
-              .map(e => e.caseValue)
-          });
-
-          // fallback (default edge)
-          if (!nextEdge) {
-            nextEdge = edges.find(
-              (e) =>
-                e.source === getStepId(currentStep) &&
-                !e.caseValue
-            );
-          }
-        }
-
-        // ✅ DEFAULT (linear fallback)
-        else {
-          nextEdge = edges.find((e) => e.source === getStepId(currentStep));
-        }
-
-        if (!nextEdge) break;
-
-        currentStep = stepsMap[nextEdge.target];
-      }
-    } else {
-      const llmResult = await executeStep(
-        {
-          type: "llm",
-          prompt: task.input?.text || "Give a short summary.",
-        },
-        context,
-        agent
-      );
-      console.log("🧪 LLM RESULT:", llmResult);
-
-      await Task.findByIdAndUpdate(task._id, {
-        $push: { stepResults: llmResult },
-      });
-
-      success = llmResult.success;
-      writeLog("Fallback LLM executed (no steps found)", "warn", {
-        workerId: WORKER_ID,
-        taskId: task._id,
-        workflowId: task.workflowId,
-      });
-    }
-
-    // -------------------------
-    // Complete task
-    // -------------------------
-    await completeTask(task._id, { success });
-
-    const durationMs = task.startedAt
-      ? Date.now() - new Date(task.startedAt).getTime()
-      : 0;
-
-    const stepTypes = context.results.map((result) => result.type || "unknown");
-    telemetryService
-      .recordTaskMetrics({ stepTypes, durationMs })
-      .catch((err) => {
-        console.error("Telemetry recordTaskMetrics failed:", err.message || err);
-      });
-
-    console.log(`✅ Task ${task._id} completed. Success: ${success}`);
-    writeLog(
-      success
-        ? "Task completed successfully"
-        : "Task completed with failure",
-      success ? "success" : "error",
-      {
-        workerId: WORKER_ID,
-        taskId: task._id,
-        workflowId: task.workflowId,
-      }
-    );
-
-  } catch (error) {
-    console.error("❌ Worker task error:", error);
-    writeLog(`Task run error: ${error.message}`, "error", {
-      workerId: WORKER_ID,
-      taskId: task._id,
-    });
-    try {
-      await completeTask(task._id, { success: false });
-    } catch (e) {
-      // ignore
-    }
-  }
-}
 
 async function runWorkerLoop() {
   if (isRunningLoop) return;
   isRunningLoop = true;
 
-  console.log("👷 Agent Runner Started… waiting for tasks");
-  writeLog("Runner started", "info", { workerId: WORKER_ID });
+  console.log('👷 Agent Runner Started… waiting for tasks');
+  writeLog('Runner started', 'info', { workerId: WORKER_ID });
 
   while (true) {
     try {
-      const limit = Number(process.env.WORKER_CONCURRENCY_LIMIT || 5);
+      const task = await claimNextTask();
 
-      if (activeThreadsCount >= limit) {
-        // Wait until a slot is freed, or timeout after 5000ms as a fallback
-        await new Promise((resolve) => {
-          const onSlotFree = () => {
-            workerEvents.off("slot_free", onSlotFree);
-            clearTimeout(timeout);
-            resolve();
-          };
-          const timeout = setTimeout(() => {
-            workerEvents.off("slot_free", onSlotFree);
-            resolve();
-          }, 5000);
-          workerEvents.once("slot_free", onSlotFree);
-        });
-        continue;
-      }
-
-      const task = await claimNextTask({ workerId: WORKER_ID });
-
+      // -------------------------
+      // IDLE → poll interval sleep
+      // -------------------------
       if (!task) {
         const { pollIntervalMs } = await getGlobalWorkerSettings();
         await sleep(pollIntervalMs);
         continue;
       }
 
-      activeThreadsCount++;
-      executeSingleTask(task).finally(() => {
-        activeThreadsCount--;
-        workerEvents.emit("slot_free");
+      // -------------------------
+      // Mark task running
+      // -------------------------
+      await Task.findByIdAndUpdate(task._id, {
+        status: 'running',
+        startedAt: new Date(),
       });
 
-    } catch (error) {
-      console.error("❌ Worker loop error:", error);
-      writeLog(`Runner error: ${error.message}`, "error", {
+      console.log(`📝 Task claimed: ${task._id}`);
+      writeLog('Task claimed', 'info', {
         workerId: WORKER_ID,
+        taskId: task._id,
+        workflowId: task.workflowId,
       });
-      const { pollIntervalMs } = await getGlobalWorkerSettings();
-      await sleep(pollIntervalMs);
+
+      const workflow = task.workflowId ? await Workflow.findById(task.workflowId).lean() : null;
+
+      let agent = null;
+
+      if (workflow?.agentId) {
+        const Agent = require('../models/agent.model');
+        agent = await Agent.findById(workflow.agentId).lean();
+      }
+
+      const now = new Date();
+      const context = {
+        ...(task.input || {}),
+        timestampIso: now.toISOString(),
+        timestamp: now.toLocaleString('en-US', {
+          dateStyle: 'long',
+          timeStyle: 'short',
+        }),
+        date: now.toLocaleDateString('en-US', { dateStyle: 'long' }),
+        time: now.toLocaleTimeString('en-US', { timeStyle: 'short' }),
+        workflow,
+        taskId: task._id,
+        userId: task.userId,
+        results: [],
+      };
+
+      // -------------------------
+      // Resolve steps
+      // -------------------------
+      const steps =
+        Array.isArray(task.steps) && task.steps.length > 0
+          ? task.steps
+          : Array.isArray(task.metadata?.steps) && task.metadata.steps.length > 0
+            ? task.metadata.steps
+            : Array.isArray(workflow?.metadata?.steps)
+              ? workflow.metadata.steps
+              : [];
+
+      const edges =
+        Array.isArray(task.metadata?.edges) && task.metadata.edges.length > 0
+          ? task.metadata.edges
+          : Array.isArray(workflow?.metadata?.edges)
+            ? workflow.metadata.edges
+            : [];
+      let success = true;
+
+      if (steps.length > 0) {
+        console.log(`⚙️ Executing ${steps.length} steps…`);
+        writeLog(`Executing ${steps.length} steps`, 'info', {
+          workerId: WORKER_ID,
+          taskId: task._id,
+          workflowId: task.workflowId,
+        });
+
+        function getStepId(step) {
+          return step?.stepId || step?.id || step?.name;
+        }
+
+        const stepsMap = {};
+        steps.forEach((s) => {
+          if (s) {
+            if (s.type) s.type = String(s.type).toLowerCase();
+            stepsMap[getStepId(s)] = s;
+          }
+        });
+
+        // -------------------------------------------------------------
+        // 🔥 RESUMABLE PATH HANDLING (Issue #57 state management)
+        // -------------------------------------------------------------
+        const resumeFromStepId = task.resumeFromStepId || task.metadata?.resumeFromStepId;
+        let currentStep = null;
+
+        if (resumeFromStepId && Array.isArray(task.stepResults) && task.stepResults.length > 0) {
+          console.log(`🔄 Resuming task execution path from step: ${resumeFromStepId}`);
+
+          task.stepResults.forEach((pastResult) => {
+            if (pastResult) {
+              // ── HITL: Inject human feedback if this is the approved node ──
+              if (task.approval && pastResult.stepId === task.approval.stepId) {
+                pastResult.output = task.approval.feedback
+                  ? `Approved with feedback: ${task.approval.feedback}`
+                  : 'Approved';
+                pastResult.feedback = task.approval.feedback;
+              }
+
+              context.results.push(pastResult);
+              context.last = {
+                input: pastResult.input,
+                output: pastResult.output,
+              };
+            }
+          });
+
+          currentStep = stepsMap[resumeFromStepId];
+
+          if (!currentStep) {
+            console.warn(
+              `⚠️ Target resume step ${resumeFromStepId} not found in graph definition.`
+            );
+          }
+        }
+
+        if (!currentStep) {
+          const targetSet = new Set(edges.map((e) => e.target));
+          currentStep = steps.find((s) => !targetSet.has(getStepId(s)));
+        }
+
+        function getNextEdge(stepLocal, resultLocal) {
+          if (stepLocal.type === 'condition') {
+            return edges.find(
+              (e) => e.source === getStepId(stepLocal) && e.condition === resultLocal.branch
+            );
+          }
+          if (stepLocal.type === 'switch') {
+            const normalize = (v) =>
+              String(v || '')
+                .toLowerCase()
+                .trim();
+            const value = normalize(resultLocal.caseValue);
+            const nextEdge = edges.find((e) => {
+              if (e.source !== getStepId(stepLocal)) return false;
+              return value.includes(normalize(e.caseValue));
+            });
+            return nextEdge || edges.find((e) => e.source === getStepId(stepLocal) && !e.caseValue);
+          }
+          return edges.find((e) => e.source === getStepId(stepLocal));
+        }
+
+        async function processBranch(startStep, branchContext, isSubBranch = false) {
+          let stepNode = startStep;
+          let stepCount = 0;
+          const branchSuccess = true;
+
+          while (stepNode && stepCount < 50) {
+            stepCount++;
+            const sId = getStepId(stepNode);
+            if ((stepNode.type === 'join' || stepNode.type === 'Join') && isSubBranch) {
+              return { success: true, branchContext, joinNode: stepNode };
+            }
+            if (stepNode.type === 'parallel' || stepNode.type === 'Parallel') {
+              const outEdges = edges.filter((e) => e.source === sId);
+              if (outEdges.length < 2) {
+                const errMsg = `Runtime Error: Parallel node requires at least 2 branches.`;
+                console.error(`❌ ${errMsg}`);
+
+                const errorResult = {
+                  stepId: sId,
+                  type: 'parallel',
+                  input: 'Branch Validation',
+                  output: errMsg,
+                  success: false,
+                  timestamp: new Date(),
+                };
+
+                await Task.findByIdAndUpdate(task._id, { $push: { stepResults: errorResult } });
+                branchContext.results.push(errorResult);
+
+                return { success: false, branchContext };
+              }
+
+              const strategy = stepNode.failureStrategy || 'fail-fast';
+              const parallelStartResult = {
+                stepId: sId,
+                type: 'parallel',
+                input: 'Parallel Execution Start',
+                output: `${outEdges.length} branches spawned concurrently...`,
+                success: true,
+                timestamp: new Date(),
+              };
+
+              await Task.findByIdAndUpdate(task._id, {
+                $push: { stepResults: parallelStartResult },
+              });
+              branchContext.results.push(parallelStartResult);
+
+              const branchPromises = outEdges.map((edge) => {
+                const targetStep = stepsMap[edge.target];
+                const isolatedContext = {
+                  ...branchContext,
+                  results: [...branchContext.results],
+                  last: branchContext.last ? { ...branchContext.last } : null,
+                };
+                return processBranch(targetStep, isolatedContext, true);
+              });
+
+              let branchResults = [];
+              let parallelSuccess = true;
+
+              if (strategy === 'fail-fast') {
+                branchResults = await Promise.all(branchPromises);
+                if (branchResults.some((r) => !r.success)) parallelSuccess = false;
+              } else {
+                const settled = await Promise.allSettled(branchPromises);
+                branchResults = settled.map((res) => {
+                  if (res.status === 'fulfilled') {
+                    if (!res.value.success) parallelSuccess = false;
+                    return res.value;
+                  } else {
+                    parallelSuccess = false;
+                    return { success: false, branchContext: { last: { output: res.reason } } };
+                  }
+                });
+              }
+
+              const aggregatedOutputs = {};
+              const flatOutputs = [];
+              branchResults.forEach((r, index) => {
+                const targetId = outEdges[index].target;
+                const outputVal = r.branchContext?.last?.output || null;
+                aggregatedOutputs[targetId] = outputVal;
+                flatOutputs.push(outputVal);
+              });
+
+              branchContext.parallel = { results: aggregatedOutputs, flat: flatOutputs };
+              branchContext.last = { output: aggregatedOutputs };
+
+              if (!parallelSuccess && strategy === 'fail-fast')
+                return { success: false, branchContext };
+
+              const uniqueJoinNodes = [
+                ...new Set(
+                  branchResults.map((r) => (r.joinNode ? getStepId(r.joinNode) : 'MISSING_JOIN'))
+                ),
+              ];
+
+              if (uniqueJoinNodes.includes('MISSING_JOIN') || uniqueJoinNodes.length > 1) {
+                const errMsg = `Join Synchronization Failed: All branches must converge to exactly one Join node. Detected: [${uniqueJoinNodes.join(', ')}]`;
+                console.error(`❌ ${errMsg}`);
+
+                const errorResult = {
+                  stepId: sId,
+                  type: 'join',
+                  input: 'Checking branch convergence',
+                  output: errMsg,
+                  success: false,
+                  timestamp: new Date(),
+                };
+
+                await Task.findByIdAndUpdate(task._id, { $push: { stepResults: errorResult } });
+                branchContext.results.push(errorResult);
+
+                return { success: false, branchContext };
+              }
+
+              const joinNode = branchResults.find((r) => r.joinNode)?.joinNode || null;
+
+              if (joinNode) {
+                const joinResult = {
+                  stepId: getStepId(joinNode),
+                  type: 'join',
+                  input: aggregatedOutputs,
+                  output: aggregatedOutputs,
+                  success: true,
+                  timestamp: new Date(),
+                };
+                await Task.findByIdAndUpdate(task._id, { $push: { stepResults: joinResult } });
+                branchContext.results.push(joinResult);
+
+                const nextEdge = getNextEdge(joinNode, joinResult);
+                if (!nextEdge) break;
+                stepNode = stepsMap[nextEdge.target];
+                continue;
+              } else {
+                break;
+              }
+            }
+            const result = await executeStep(stepNode, branchContext, agent);
+            console.log(`StepNode: ${stepNode.name}`);
+            console.log(`result: ${result}`);
+            if (!result) {
+              throw new Error(
+                `executeStep returned ${result} for step ${stepNode.name} (${stepNode.type})`
+              );
+            }
+            result.name = stepNode.name;
+            result.type = stepNode.type;
+            console.log(`result name: ${result.name}`);
+
+            await Task.findByIdAndUpdate(task._id, { $push: { stepResults: result } });
+
+            branchContext.results.push(result);
+            branchContext.last = { input: result.input, output: result.output };
+
+            if (!result.success) return { success: false, branchContext };
+
+            const nextEdge = getNextEdge(stepNode, result);
+            const nextStepId = nextEdge ? nextEdge.target : null;
+
+            // ── HITL: Pause execution if this step requires human approval ──
+            if (result.requiresApproval) {
+              await Task.findByIdAndUpdate(task._id, {
+                $set: {
+                  status: 'pending_approval',
+                  resumeFromStepId: nextStepId,
+                  approval: {
+                    stepId: getStepId(stepNode),
+                    requestedAt: new Date(),
+                  },
+                },
+              });
+              console.log(`⏸️ Task ${task._id} paused for approval at step ${getStepId(stepNode)}`);
+              writeLog('Task paused for approval', 'info', {
+                workerId: WORKER_ID,
+                taskId: task._id,
+                stepId: getStepId(stepNode),
+              });
+              return { success: false, branchContext, paused: true };
+            }
+
+            if (!nextEdge) break;
+            stepNode = stepsMap[nextEdge.target];
+          }
+
+          return { success: branchSuccess, branchContext };
+        }
+        const finalExecution = await processBranch(currentStep, context, false);
+        if (finalExecution.paused) return; // Exit immediately if paused for HITL
+        success = finalExecution.success;
+      } else {
+        const llmResult = await executeStep(
+          {
+            type: 'llm',
+            prompt: task.input?.text || 'Give a short summary.',
+          },
+          context,
+          agent
+        );
+
+        await Task.findByIdAndUpdate(task._id, {
+          $push: { stepResults: llmResult },
+        });
+
+        success = llmResult.success;
+      }
+
+      await completeTask(task._id, { success });
+
+      const durationMs = task.startedAt ? Date.now() - new Date(task.startedAt).getTime() : 0;
+
+      const stepTypes = context.results.map((result) => result.type || 'unknown');
+      telemetryService.recordTaskMetrics({ stepTypes, durationMs }).catch((err) => {
+        console.error('Telemetry failed:', err.message || err);
+      });
+
+      console.log(`✅ Task ${task._id} completed. Success: ${success}`);
+    } catch (error) {
+      console.error('❌ Worker loop error:', error);
+      await sleep(SAFE_FALLBACK_SETTINGS.pollIntervalMs);
     }
   }
 }
 
-/* -------------------------
-   Startup
-------------------------- */
 async function start() {
   if (mongoose.connection.readyState === 0) {
-    const maxPoolSize = Number(process.env.MONGO_MAX_POOL_SIZE || 100);
-    const minPoolSize = Number(process.env.MONGO_MIN_POOL_SIZE || 10);
-    await mongoose.connect(process.env.MONGO_URI, {
-      maxPoolSize,
-      minPoolSize,
-    });
-    console.log("📡 MongoDB connected for Agent Runner");
+    await mongoose.connect(process.env.MONGO_URI);
+    console.log('📡 MongoDB connected for Agent Runner');
   }
   runWorkerLoop();
 }
@@ -433,6 +453,5 @@ async function start() {
 module.exports = { start, runWorkerLoop };
 
 if (require.main === module) {
-  console.log("🚀 Starting Worker Service...");
   start();
 }

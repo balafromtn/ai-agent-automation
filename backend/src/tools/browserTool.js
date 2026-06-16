@@ -18,9 +18,6 @@ function resolveSafePath(filePath) {
   return resolved;
 }
 
-/**
- * Launch options: if you run in serverless or docker, tune args/no-sandbox as needed.
- */
 async function launchBrowser() {
   return puppeteer.launch({
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -29,42 +26,26 @@ async function launchBrowser() {
   });
 }
 
-/**
- * Take screenshot of url.
- * options: { fullPage: false, selector: null, timeout, path }
- */
 async function screenshot(url, options = {}) {
   const browser = await launchBrowser();
   const page = await browser.newPage();
   try {
-    await page.goto(url, {
-      waitUntil: 'networkidle2',
-      timeout: options.timeout || DEFAULT_TIMEOUT,
-    });
-
-    const screenshotOpts = { fullPage: !!options.fullPage };
+    await page.goto(url, { waitUntil: "networkidle2", timeout: options.timeout || DEFAULT_TIMEOUT });
+    let screenshotOpts = { fullPage: !!options.fullPage };
     if (options.path) {
       const safePath = resolveSafePath(options.path);
-      // Ensure the destination folder exists
       await mkdirp(path.dirname(safePath), { recursive: true });
       screenshotOpts.path = safePath;
     }
 
     if (options.selector) {
       const el = await page.$(options.selector);
-      if (!el) throw new Error('selector_not_found');
-
-      const buffer = await el.screenshot({ ...screenshotOpts, type: 'png' });
-      if (options.path) {
-        return { path: screenshotOpts.path };
-      }
-      return { buffer };
+      if (!el) throw new Error("selector_not_found");
+      const buffer = await el.screenshot({ ...screenshotOpts, type: "png" });
+      return options.path ? { path: screenshotOpts.path } : { buffer };
     } else {
-      const buffer = await page.screenshot({ ...screenshotOpts, type: 'png' });
-      if (options.path) {
-        return { path: screenshotOpts.path };
-      }
-      return { buffer };
+      const buffer = await page.screenshot({ ...screenshotOpts, type: "png" });
+      return options.path ? { path: screenshotOpts.path } : { buffer };
     }
   } finally {
     await page.close();
@@ -72,10 +53,6 @@ async function screenshot(url, options = {}) {
   }
 }
 
-/**
- * evaluate(url, script)
- * script is a string of JS that will run in the page context and must return a JSON-serializable value.
- */
 async function evaluate(url, script, options = {}) {
   const browser = await launchBrowser();
   const page = await browser.newPage();
@@ -99,4 +76,22 @@ async function evaluate(url, script, options = {}) {
   }
 }
 
-module.exports = { screenshot, evaluate };
+/**
+ * Standardized Tool Contract Interface Mapping Implementation
+ */
+async function run(step, context, interpolate) {
+  const targetFunction = (step.action || "screenshot").toLowerCase();
+  const url = step.url || "";
+
+  if (targetFunction === "screenshot") {
+    const relativeOutPath = `screenshot_${context.taskId}_${Date.now()}.png`;
+    return await screenshot(url, { path: relativeOutPath });
+  } else if (targetFunction === "evaluate") {
+    const userCode = step.code || 'return document.title;';
+    return await evaluate(url, userCode);
+  } else {
+    throw new Error(`Unsupported browser action matrix descriptor: [${targetFunction}]`);
+  }
+}
+
+module.exports = { screenshot, evaluate, run };

@@ -1,97 +1,131 @@
 // backend/src/agents/executor.js
-const fs = require("fs");
-const path = require("path");
-const axios = require("axios");
-const { runLLM } = require("./llmAdapter");
-const { runGitHub } = require("../integrations/github");
-const { runSlack } = require("../integrations/slack");
-const { runDiscord } = require("../integrations/discord");
-const { invokeTool: invokeMcpTool } = require("../mcp/executionAdapter");
-require("dotenv").config();
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const { runLLM } = require('./llmAdapter');
+const { invokeTool: invokeMcpTool } = require('../mcp/executionAdapter');
+const { hasTool, dispatchTool } = require('../tools/registry');
+require('dotenv').config();
+
+// ─── UTILITY FUNCTIONS (MOVED TO TOP TO PREVENT REFERENCE ERRORS) ──────────────────
+
+function interpolate(template = '', context = {}) {
+  if (typeof template !== 'string') return template;
+  return template.replace(/\{\{(.*?)\}\}/g, (_, key) => {
+    const parts = key.trim().split('.');
+    let val = context;
+    for (const p of parts) {
+      if (val === undefined || val === null) break;
+      val = val[p];
+    }
+    if (val === undefined || val === null) return '';
+    if (typeof val === 'object') return JSON.stringify(val, null, 2);
+    return String(val);
+  });
+}
 
 function resolveWorkflowFilePath(filePath) {
-  if (typeof filePath !== "string" || filePath.trim() === "") {
-    throw new Error("Invalid file path");
+  if (typeof filePath !== 'string' || filePath.trim() === '') {
+    throw new Error('Invalid file path');
   }
 
-  if (filePath.includes("\0")) {
-    throw new Error("Invalid file path");
+  if (filePath.includes('\0')) {
+    throw new Error('Invalid file path');
   }
 
   if (path.isAbsolute(filePath) || path.win32.isAbsolute(filePath)) {
-    throw new Error("Invalid file path: absolute paths are not allowed");
+    throw new Error('Invalid file path: absolute paths are not allowed');
   }
 
-  const workflowBaseDir = path.resolve(
-    process.cwd(),
-    "runtime",
-    "workflow-files"
-  );
-
+  const workflowBaseDir = path.resolve(process.cwd(), 'runtime', 'workflow-files');
   const resolvedPath = path.resolve(workflowBaseDir, filePath);
   const relativePath = path.relative(workflowBaseDir, resolvedPath);
 
-  if (
-    relativePath === "" ||
-    relativePath.startsWith("..") ||
-    path.isAbsolute(relativePath)
-  ) {
-    throw new Error("Invalid file path: path escapes workflow directory");
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    throw new Error('Invalid file path: path escapes workflow directory');
   }
 
   return resolvedPath;
 }
 
 async function executeStep(step, context = {}, agent = null) {
-  const start = Date.now();
+  const validatedStepId = step.stepId || step.id || step.name || null;
+  const explicitTimeout = Number(step.timeoutMs ?? step.timeout);
+  const finalTimeoutMs = !isNaN(explicitTimeout) && explicitTimeout > 0 ? explicitTimeout : 30000;
+
+  let timeoutId = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`Step execution timed out after ${finalTimeoutMs}ms`));
+    }, finalTimeoutMs);
+  });
 
   try {
-    // ----- LLM -----
-    if (step.type === "llm") {
-      const prompt = interpolate(step.prompt, context);
+    const result = await Promise.race([
+      internalExecuteStep(step, context, agent, validatedStepId, finalTimeoutMs),
+      timeoutPromise,
+    ]);
 
-      let finalPrompt = prompt;
+    return result;
+  } catch (err) {
+    const isTimeout = err.message?.includes('timed out');
+    return {
+      stepId: validatedStepId,
+      type: step.type || 'unknown',
+      tool: step.tool || 'unknown',
+      input: isTimeout ? '[timeout]' : '[error]',
+      output: err.message,
+      success: false,
+      error: err.stack ? String(err.stack).slice(0, 2000) : undefined,
+      timestamp: new Date(),
+    };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
 
-      // ── Memory retrieval (with telemetry capture) ──────────────────────
-      let memoryMetrics = null;
+/**
+ * Isolated Tool Processing Logic - Completely Decoupled Platform Implementation
+ */
+async function internalExecuteStep(step, context, agent, validatedStepId, finalTimeoutMs) {
+  const stepType = String(step.type || '').toLowerCase();
 
-      if (step.useMemory && agent) {
-        const { retrieveMemory } = require("../services/memoryService");
+  // =========================
+  // LLM
+  // =========================
+  if (stepType === 'llm') {
+    const prompt = interpolate(step.prompt || '', context);
+    let finalPrompt = prompt;
+    let memoryMetrics = null;
 
-        const memories = await retrieveMemory(agent, prompt, step.memoryTopK || 5);
+    if (step.useMemory && agent) {
+      const { retrieveMemory, storeMemory } = require('../services/memoryService');
 
-        // 📊 Capture similarity telemetry for the insights engine
-        if (memories.length > 0) {
-          const similarityScores = memories.map((m) =>
-            typeof m.score === "number" ? m.score : 0
-          );
-          const averageSimilarity =
-            similarityScores.reduce((acc, s) => acc + s, 0) / similarityScores.length;
+      const memories = await retrieveMemory(agent, prompt, step.memoryTopK || 5);
 
-          memoryMetrics = {
-            useMemory: true,
-            retrievedMemoriesCount: memories.length,
-            similarityScores,
-            averageSimilarity: Math.round(averageSimilarity * 1000) / 1000
-          };
+      memoryMetrics = {
+        useMemory: true,
+        retrievedMemoriesCount: memories.length,
+      };
 
-          const MAX_MEMORY_CHARS = 4000;
-
-          let memoryText = memories
-            .map((m, i) => {
+      if (memories.length > 0) {
+        const memoryText = memories
+          .map((m, i) => {
+            try {
               const parsed = JSON.parse(m.content);
-              return `Memory ${i + 1}:\nUser: ${parsed.user}\nAssistant: ${parsed.assistant}`;
-            })
-            .join("\n\n");
 
-          if (memoryText.length > MAX_MEMORY_CHARS) {
-            memoryText = memoryText.slice(0, MAX_MEMORY_CHARS);
-          }
+              return `Memory ${i + 1}:
+User: ${parsed.user}
+Assistant: ${parsed.assistant}`;
+            } catch {
+              return m.content;
+            }
+          })
+          .join('\n\n')
+          .slice(0, 4000);
 
-          finalPrompt =
-            `SYSTEM INSTRUCTION:
+        finalPrompt = `SYSTEM INSTRUCTION:
 You are an AI agent with persistent memory.
-The following MEMORY is factual and must be used when answering.
 
 MEMORY:
 ${memoryText}
@@ -99,757 +133,351 @@ ${memoryText}
 USER QUESTION:
 ${prompt}
 
-Use the MEMORY section to answer the question.
-
-If the answer appears in MEMORY, respond using it.
-
-If MEMORY contains the project name or related information, return it clearly.
-Do not say you lack memory.`;
-
-          console.log("Retrieved memories:", memories.length, "| avgSimilarity:", memoryMetrics.averageSimilarity);
-        } else {
-          // Memory was enabled but nothing was retrieved
-          memoryMetrics = {
-            useMemory: true,
-            retrievedMemoriesCount: 0,
-            similarityScores: [],
-            averageSimilarity: 0
-          };
-        }
+Use the MEMORY section when relevant.`;
       }
 
       const llmRes = await runLLM(finalPrompt, {
         provider: agent?.config?.provider,
         model: agent?.config?.model,
         temperature: agent?.config?.temperature,
-        ...step.options
+        ...step.options,
       });
 
-      const result = {
-        stepId: step.stepId || null,
-        type: "llm",
-        tool: "llm",
+      if (llmRes?.text) {
+        await storeMemory(
+          agent,
+          JSON.stringify({
+            user: prompt,
+            assistant: llmRes.text,
+          }),
+          {
+            taskId: context.taskId,
+            workflowId: context.workflow?._id,
+            type: 'conversation',
+          }
+        );
+      }
+
+      return {
+        stepId: validatedStepId,
+        type: 'llm',
+        tool: 'llm',
         input: prompt,
         output: llmRes.text,
         raw: llmRes.raw,
         success: true,
         timestamp: new Date(),
-        // Attach memory telemetry if memory was used (null otherwise)
-        ...(memoryMetrics ? { metrics: memoryMetrics } : {})
-      };
-
-      if (step.useMemory && agent && llmRes.text) {
-        const { storeMemory } = require("../services/memoryService");
-
-        await storeMemory(
-          agent,
-          JSON.stringify({
-            user: prompt,
-            assistant: llmRes.text
-          }),
-          {
-            taskId: context.taskId,
-            workflowId: context.workflow?._id,
-            type: "conversation"
-          }
-        );
-      }
-
-      return result;
-    }
-
-    // ----- APPROVAL (Human-In-The-Loop) -----
-    if (step.type === "approval" || step.type === "Approval") {
-      const message = step.message
-        ? interpolate(step.message, context)
-        : "Approval required before continuing";
-
-      return {
-        stepId: step.stepId || null,
-        type: "approval",
-        tool: "approval",
-        input: { message },
-        output: "Awaiting human approval",
-        success: true,
-        requiresApproval: true,
-        timestamp: new Date(),
+        metrics: memoryMetrics,
       };
     }
 
-    // Delay step
-    if (step.type === "delay") {
-      const sec = Number(
-        step.seconds ?? step.delay ?? step.prompt ?? 0
-      );
+    const llmRes = await runLLM(prompt, {
+      provider: agent?.config?.provider,
+      model: agent?.config?.model,
+      temperature: agent?.config?.temperature,
+      ...step.options,
+    });
 
-      console.log("⏳ Delay step → sleeping for", sec, "seconds");
+    return {
+      stepId: validatedStepId,
+      type: 'llm',
+      tool: 'llm',
+      input: prompt,
+      output: llmRes.text,
+      raw: llmRes.raw,
+      success: true,
+      timestamp: new Date(),
+    };
+  }
 
-      await new Promise(resolve => setTimeout(resolve, sec * 1000));
+  // =========================
+  // APPROVAL (Human-In-The-Loop)
+  // =========================
+  if (stepType === 'approval') {
+    const message = step.approvalMessage || step.message
+      ? interpolate(step.approvalMessage || step.message, context)
+      : 'Approval required before continuing';
 
-      return {
-        stepId: step.stepId,
-        type: "delay",
-        tool: "delay",
-        input: sec,
-        output: `Slept for ${sec} seconds`,
-        success: true,
-        timestamp: new Date(),
-      };
-    }
+    return {
+      stepId: validatedStepId,
+      type: 'approval',
+      tool: 'approval',
+      input: { message },
+      output: 'Awaiting human approval',
+      success: true,
+      requiresApproval: true,
+      timestamp: new Date(),
+    };
+  }
 
-    // ----- HTTP -----
-    if (step.type === "http") {
-      let parsedBody = null;
+  // =========================
+  // DELAY
+  // =========================
+  if (stepType === 'delay') {
+    const sec = Number(step.seconds ?? step.delay ?? 0);
 
-      if (step.body) {
-        const interpolated = interpolate(step.body, context);
-        try {
-          parsedBody = JSON.parse(interpolated);
-        } catch (err) {
-          parsedBody = interpolated;
-        }
-      }
+    await new Promise((resolve) => setTimeout(resolve, sec * 1000));
 
-      const response = await axios({
-        method: (step.method || "GET").toLowerCase(),
-        url: interpolate(step.url || "", context),
-        data: parsedBody,
-        headers: step.headers || {},
-        timeout: step.timeout || 30000,
-        validateStatus: () => true,
-      });
+    return {
+      stepId: validatedStepId,
+      type: 'delay',
+      tool: 'delay',
+      input: sec,
+      output: `Slept for ${sec} seconds`,
+      success: true,
+      timestamp: new Date(),
+    };
+  }
 
-      return {
-        stepId: step.stepId || null,
-        type: "http",
-        tool: "http",
-        input: interpolate(step.url || "", context),
-        output: response.data,
-        success: response.status >= 200 && response.status < 300,
-        timestamp: new Date()
-      };
-    }
+  // =========================
+  // HTTP
+  // =========================
+  if (stepType === 'http') {
+    let parsedBody = null;
 
-    // ----- EMAIL -----
-    if (step.type === "email") {
-      try {
-        const nodemailer = require("nodemailer");
-
-        const transporter = nodemailer.createTransport({
-          host: process.env.EMAIL_HOST,
-          port: Number(process.env.EMAIL_PORT),
-          auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS,
-          },
-        });
-
-        const to = interpolate(step.to || "", context);
-        const subject = interpolate(step.subject || "", context);
-        const text = interpolate(step.text || "", context);
-        const html = interpolate(step.html || "", context);
-
-        const info = await transporter.sendMail({
-          from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-          to,
-          subject,
-          text,
-          html,
-        });
-
-        return {
-          stepId: step.stepId,
-          type: "email",
-          tool: "email",
-          input: { to, subject, text, html },
-          output: {
-            messageId: info.messageId,
-            accepted: info.accepted,
-          },
-          success: true,
-          timestamp: new Date(),
-        };
-      } catch (err) {
-        return {
-          stepId: step.stepId,
-          type: "email",
-          tool: "email",
-          input: null,
-          output: err.message,
-          success: false,
-          timestamp: new Date(),
-        };
-      }
-    }
-
-    // ----- FILE -----
-    if (step.type === "file") {
-      const action = (step.action || "read").toLowerCase();
-
-      const requestedPath = step.path
-        ? interpolate(step.path, context)
-        : `stepName_${step.name}_TaskId_${context.taskId}.txt`;
-
-      let outPath;
+    if (step.body) {
+      const interpolated = interpolate(step.body, context);
 
       try {
-        outPath = resolveWorkflowFilePath(requestedPath);
-      } catch (err) {
-        return {
-          stepId: step.stepId,
-          type: "file",
-          tool: "file",
-          input: { action, path: requestedPath },
-          output: err.message,
-          success: false,
-          timestamp: new Date(),
-        };
-      }
-
-      const content = interpolate(step.content || "", context);
-      const { runToolInSandbox } = require("../tools/registry");
-
-      try {
-        if (action === "write") {
-          const res = await runToolInSandbox("fileTool", "write", [resolvedPath, content]);
-          return {
-            stepId: step.stepId,
-            type: "file",
-            tool: "file",
-            input: { action, path: resolvedPath, content },
-            output: { path: res.path },
-            success: true,
-            timestamp: new Date(),
-          };
-        }
-
-        if (action === "append") {
-          const res = await runToolInSandbox("fileTool", "append", [resolvedPath, content]);
-          return {
-            stepId: step.stepId,
-            type: "file",
-            tool: "file",
-            input: { action, path: resolvedPath, content },
-            output: { path: res.path },
-            success: true,
-            timestamp: new Date(),
-          };
-        }
-
-        if (action === "read") {
-          const res = await runToolInSandbox("fileTool", "read", [resolvedPath]);
-          return {
-            stepId: step.stepId,
-            type: "file",
-            tool: "file",
-            input: { action, path: resolvedPath },
-            output: res,
-            success: true,
-            timestamp: new Date(),
-          };
-        }
-
-        return {
-          stepId: step.stepId,
-          type: "file",
-          tool: "file",
-          input: { action },
-          output: `Unknown file action: ${action}`,
-          success: false,
-          timestamp: new Date(),
-        };
-      } catch (err) {
-        return {
-          stepId: step.stepId,
-          type: "file",
-          tool: "file",
-          input: { action, path: resolvedPath },
-          output: err.message,
-          success: false,
-          timestamp: new Date(),
-        };
+        parsedBody = JSON.parse(interpolated);
+      } catch {
+        parsedBody = interpolated;
       }
     }
 
-    // ----- BROWSER -----
-    if (step.type === "browser") {
-      const action = (step.action || "screenshot").toLowerCase();
-      const url = interpolate(step.url || "", context);
-      const { runToolInSandbox } = require("../tools/registry");
+    const response = await axios({
+      method: (step.method || 'GET').toLowerCase(),
+      url: interpolate(step.url || '', context),
+      data: parsedBody,
+      headers: step.headers || {},
+      timeout: step.timeout || 30000,
+      validateStatus: () => true,
+    });
 
-      try {
-        if (action === "screenshot") {
-          const outPath = path.join(
-            "runtime",
-            `screenshot_${context.taskId}_${Date.now()}.png`
-          );
+    return {
+      stepId: validatedStepId,
+      type: 'http',
+      tool: 'http',
+      input: interpolate(step.url || '', context),
+      output: response.data,
+      success: response.status >= 200 && response.status < 300,
+      timestamp: new Date(),
+    };
+  }
 
-          const res = await runToolInSandbox("browserTool", "screenshot", [url, { path: outPath }]);
+  // =========================
+  // EMAIL
+  // =========================
+  if (stepType === 'email') {
+    const nodemailer = require('nodemailer');
 
-          return {
-            stepId: step.stepId,
-            type: "browser",
-            tool: "browser",
-            input: { action, url },
-            output: { path: res.path },
-            success: true,
-            timestamp: new Date(),
-          };
-        }
+    const transporter = nodemailer.createTransport({
+      host: process.env.EMAIL_HOST,
+      port: Number(process.env.EMAIL_PORT),
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
 
-        if (action === "evaluate") {
-          const userCode = step.code || "return document.title;";
+    const info = await transporter.sendMail({
+      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+      to: interpolate(step.to || '', context),
+      subject: interpolate(step.subject || '', context),
+      text: interpolate(step.text || '', context),
+      html: interpolate(step.html || '', context),
+    });
 
-          const res = await runToolInSandbox("browserTool", "evaluate", [url, userCode]);
-          const result = res.result;
+    return {
+      stepId: validatedStepId,
+      type: 'email',
+      tool: 'email',
+      output: {
+        messageId: info.messageId,
+        accepted: info.accepted,
+      },
+      success: true,
+      timestamp: new Date(),
+    };
+  }
 
-          return {
-            stepId: step.stepId,
-            type: "browser",
-            tool: "browser",
-            input: { action, url, code: userCode },
-            output: result,
-            success: !result?.error,
-            timestamp: new Date(),
-          };
-        }
+  // =========================
+  // FILE
+  // =========================
+  if (stepType === 'file') {
+    const filePath = resolveWorkflowFilePath(step.path);
 
-        return {
-          stepId: step.stepId,
-          type: "browser",
-          tool: "browser",
-          input: { action },
-          output: `Unknown browser action: ${action}`,
-          success: false,
-          timestamp: new Date(),
-        };
-      } catch (err) {
-        return {
-          stepId: step.stepId,
-          type: "browser",
-          tool: "browser",
-          input: { action, url },
-          output: err.message,
-          success: false,
-          timestamp: new Date(),
-        };
-      }
-    }
+    fs.mkdirSync(path.dirname(filePath), {
+      recursive: true,
+    });
 
-    // ----- DOCUMENT QUERY -----
-    if (step.type === "document_query") {
-      const { queryDocument } = require("../services/documentService");
-
-      const documentId = step.documentId;
-      const query = interpolate(step.query || "", context);
-      const requestedTopK = step.topK || 3;
-
-      const chunks = await queryDocument(
-        agent,
-        context.userId,
-        documentId,
-        query,
-        requestedTopK
-      );
-
-      // 📊 Capture RAG chunk retrieval telemetry for the insights engine
-      const RELEVANT_SIMILARITY_THRESHOLD = 0.7;
-      const chunkScores = chunks.map((c) =>
-        typeof c.score === "number" ? c.score : 0
-      );
-      const ragAverageSimilarity =
-        chunkScores.length > 0
-          ? chunkScores.reduce((acc, s) => acc + s, 0) / chunkScores.length
-          : 0;
-      const relevantChunksCount = chunkScores.filter(
-        (s) => s >= RELEVANT_SIMILARITY_THRESHOLD
-      ).length;
-
-      const ragMetrics = {
-        topK: requestedTopK,
-        retrievedChunksCount: chunks.length,
-        averageSimilarity: Math.round(ragAverageSimilarity * 1000) / 1000,
-        relevantChunksCount
-      };
-
-      let contextText = chunks
-        .map((c, i) => `Chunk ${i + 1}:\n${c.content}`)
-        .join("\n\n");
-
-      const MAX_CONTEXT = 3000;
-      if (contextText.length > MAX_CONTEXT) {
-        contextText = contextText.slice(0, MAX_CONTEXT);
-      }
-
-      const finalPrompt = `
-SYSTEM INSTRUCTION:
-You are answering questions using retrieved document context.
-
-Rules:
-- Only use the provided document context.
-- If the answer is not in the context, say "The document does not contain that information."
-- Do not hallucinate.
-
-DOCUMENT CONTEXT:
-${contextText}
-
-QUESTION:
-${query}
-`;
-
-      const llmRes = await runLLM(finalPrompt, {
-        provider: agent?.config?.provider,
-        model: agent?.config?.model,
-        temperature: agent?.config?.temperature
-      });
-
-      console.log(
-        `📄 RAG query: topK=${requestedTopK}, retrieved=${chunks.length}, relevant=${relevantChunksCount}, avgSimilarity=${ragMetrics.averageSimilarity}`
-      );
-
+    if (step.action === 'read') {
       return {
-        stepId: step.stepId,
-        type: "document_query",
-        tool: "document",
-        input: query,
-        output: llmRes.text,
+        stepId: validatedStepId,
+        type: 'file',
+        tool: 'file',
+        output: fs.readFileSync(filePath, 'utf8'),
         success: true,
         timestamp: new Date(),
-        metrics: ragMetrics
       };
     }
 
-    // ----- CONDITION -----
-    if (step.type === "condition") {
-      const normalize = (val) => {
-        if (!val) return "";
-        return String(val)
+    const content = interpolate(step.content || context.last?.output || '', context);
+
+    if (step.action === 'append') {
+      fs.appendFileSync(filePath, content);
+    } else {
+      fs.writeFileSync(filePath, content);
+    }
+
+    return {
+      stepId: validatedStepId,
+      type: 'file',
+      tool: 'file',
+      output: filePath,
+      success: true,
+      timestamp: new Date(),
+    };
+  }
+
+  // =========================
+  // DOCUMENT QUERY
+  // =========================
+  if (stepType === 'document_query') {
+    const { queryDocument } = require('../services/documentService');
+
+    const query = interpolate(step.query || '', context);
+
+    const chunks = await queryDocument(
+      agent,
+      context.userId,
+      step.documentId,
+      query,
+      step.topK || 3
+    );
+
+    const contextText = chunks
+      .map((c) => c.content)
+      .join('\n\n')
+      .slice(0, 3000);
+
+    const llmRes = await runLLM(`DOCUMENT CONTEXT:\n${contextText}\n\nQUESTION:\n${query}`, {
+      provider: agent?.config?.provider,
+      model: agent?.config?.model,
+      temperature: agent?.config?.temperature,
+    });
+
+    return {
+      stepId: validatedStepId,
+      type: 'document_query',
+      tool: 'document',
+      input: query,
+      output: llmRes.text,
+      success: true,
+      timestamp: new Date(),
+    };
+  }
+
+  // =========================
+  // CONDITION
+  // =========================
+  if (stepType === 'condition') {
+    const output = String(context.last?.output || '');
+
+    let evaluation = false;
+
+    if (step.conditionType === 'contains') {
+      evaluation = output.toLowerCase().includes(
+        String(step.value || '')
           .toLowerCase()
           .trim()
-          .replace(/[\n\r]+/g, " ")
-          .replace(/[^\w\s]/g, "")
-          .replace(/\s+/g, " ");
-      };
+      );
+    } else if (step.conditionType === 'boolean') {
+      const aiResult = await runLLM(`Answer only true or false:\n${output}`, {
+        provider: agent?.config?.provider,
+        model: agent?.config?.model,
+        temperature: 0,
+      });
 
-      const rawOutput = context.last?.output || "";
-      const text = normalize(rawOutput);
-
-      let evaluation = false;
-
-      const positiveWords = ["yes", "true", "correct", "right", "positive"];
-      const negativeWords = ["no", "false", "incorrect", "wrong", "negative"];
-
-      try {
-        // ---------- BOOLEAN ----------
-        if (step.conditionType === "boolean") {
-          const userQuery = context.results[0]?.input || "";
-          const modelAnswer = context.last?.output || "";
-
-          const prompt = `
-You are a strict boolean evaluator.
-
-Question:
-${userQuery}
-
-Answer:
-${modelAnswer}
-
-Does the answer mean TRUE or FALSE?
-
-Respond ONLY with:
-true
-or
-false
-`;
-
-          const aiResult = await runLLM(prompt, {
-            provider: agent?.config?.provider,
-            model: agent?.config?.model,
-            temperature: 0,
-          });
-
-          const cleaned = aiResult.text.toLowerCase().trim();
-
-          evaluation = cleaned.includes("true");
-        }
-
-        // ---------- SENTIMENT ----------
-        if (step.conditionType === "sentiment") {
-          let result = null;
-
-          if (text.includes("positive")) result = true;
-          else if (text.includes("negative")) result = false;
-
-          if (result === null) {
-            const classification = await runLLM(
-              `
-Reply ONLY "positive" or "negative".
-
-Text:
-${rawOutput}
-`,
-              {
-                provider: agent?.config?.provider,
-                model: agent?.config?.model,
-                temperature: 0,
-              }
-            );
-
-            const res = normalize(classification.text);
-
-            result = res.includes("positive");
-          }
-
-          evaluation =
-            step.operator === "isPositive"
-              ? result === true
-              : result === false;
-        }
-      } catch (err) {
-        console.log("❌ Condition error:", err);
-        evaluation = false;
-      }
-
-      return {
-        stepId: step.stepId,
-        type: "condition",
-        output: evaluation,
-        branch: evaluation ? "true" : "false",
-        success: true,
-        timestamp: new Date(),
-      };
+      evaluation = aiResult.text.toLowerCase().includes('true');
     }
 
-    // ----- SWITCH -----
-    if (step.type === "switch") {
-      const output = String(context.last?.output || "")
-        .toLowerCase()
-        .trim();
-
-      console.log("🔀 SWITCH INPUT:", output);
-
-      return {
-        stepId: step.stepId,
-        type: "switch",
-        tool: "switch",
-        input: output,
-        output: output,
-        caseValue: output,
-        success: true,
-        timestamp: new Date(),
-      };
-    }
-
-    // ----- MCP -----
-    if (step.type === "mcp") {
-      try {
-        const execution = await invokeMcpTool({
-          userId: context.userId,
-          serverId: step.serverId,
-          toolName: step.toolName,
-          argumentsInput: step.arguments,
-          context,
-          interpolate,
-          timeoutMs: step.timeoutMs,
-        });
-
-        return {
-          stepId: step.stepId || null,
-          type: "mcp",
-          tool: "mcp",
-          input: {
-            serverId: step.serverId,
-            toolName: step.toolName,
-            arguments: execution.args,
-          },
-          output: execution.result,
-          serverId: step.serverId,
-          toolName: step.toolName,
-          success: true,
-          timestamp: new Date(),
-        };
-      } catch (err) {
-        return {
-          stepId: step.stepId || null,
-          type: "mcp",
-          tool: "mcp",
-          input: {
-            serverId: step.serverId,
-            toolName: step.toolName,
-          },
-          output: err.message,
-          serverId: step.serverId,
-          toolName: step.toolName,
-          success: false,
-          timestamp: new Date(),
-        };
-      }
-    }
-
-    // ----- GITHUB -----
-    if (step.type === "github") {
-      try {
-        const output = await runGitHub(step, context, interpolate);
-        return {
-          stepId: step.stepId || null,
-          type: "github",
-          tool: "github",
-          input: { action: step.action },
-          output,
-          success: true,
-          timestamp: new Date(),
-        };
-      } catch (err) {
-        return {
-          stepId: step.stepId || null,
-          type: "github",
-          tool: "github",
-          input: { action: step.action },
-          output: err.message,
-          success: false,
-          timestamp: new Date(),
-        };
-      }
-    }
-
-    // ----- SLACK -----
-    if (step.type === "slack") {
-      try {
-        const output = await runSlack(step, context, interpolate);
-        return {
-          stepId: step.stepId || null,
-          type: "slack",
-          tool: "slack",
-          input: { action: step.action },
-          output,
-          success: true,
-          timestamp: new Date(),
-        };
-      } catch (err) {
-        return {
-          stepId: step.stepId || null,
-          type: "slack",
-          tool: "slack",
-          input: { action: step.action },
-          output: err.message,
-          success: false,
-          timestamp: new Date(),
-        };
-      }
-    }
-
-    // ----- DISCORD -----
-    if (step.type === "discord") {
-      try {
-        const output = await runDiscord(step, context, interpolate);
-        return {
-          stepId: step.stepId || null,
-          type: "discord",
-          tool: "discord",
-          input: { action: step.action },
-          output,
-          success: true,
-          timestamp: new Date(),
-        };
-      } catch (err) {
-        return {
-          stepId: step.stepId || null,
-          type: "discord",
-          tool: "discord",
-          input: { action: step.action },
-          output: err.message,
-          success: false,
-          timestamp: new Date(),
-        };
-      }
-    }
-
-    // unknown step type
     return {
-      stepId: step.stepId || null,
-      type: step.type || "unknown",
-      tool: step.tool || "unknown",
-      input: null,
-      output: `Unknown step type: ${step.type}`,
-      success: false,
-      timestamp: new Date()
+      stepId: validatedStepId,
+      type: 'condition',
+      output: evaluation,
+      branch: evaluation ? 'true' : 'false',
+      success: true,
+      timestamp: new Date(),
     };
-  } catch (err) {
-    return {
-      stepId: step.stepId || null,
-      type: step.type || "unknown",
-      tool: step.tool || "unknown",
-      input: "[error]",
-      output: err.message,
-      success: false,
-      error: (err && err.stack) ? String(err.stack).slice(0, 2000) : undefined,
-      timestamp: new Date()
-    };
-  } finally {
-    // const duration = Date.now() - start;
   }
-}
 
-/**
- * Basic template interpolation: {{key}} replaced by context[key]
- */
-function interpolate(template = "", context = {}) {
-  if (typeof template !== "string") return template;
-  return template.replace(/\{\{(.*?)\}\}/g, (_, key) => {
-    const k = key.trim();
-    const parts = k.split(".");
-    let val = context;
+  // =========================
+  // SWITCH
+  // =========================
+  if (stepType === 'switch') {
+    const value = String(context.last?.output || '')
+      .toLowerCase()
+      .trim();
 
-    for (const p of parts) {
-      if (val === undefined || val === null) break;
-      val = val[p];
-    }
-
-    if (val === undefined || val === null) return "";
-
-    if (typeof val === "object") {
-      return JSON.stringify(val, null, 2);
-    }
-
-    return String(val);
-  });
-}
-
-function evaluateExpression(expression, context) {
-  try {
-    const normalize = (val) => {
-      if (typeof val !== "string") return val;
-
-      return val
-        .toLowerCase()
-        .trim()
-        .replace(/[\n\r]+/g, "")
-        .replace(/[^\w]/g, "");
+    return {
+      stepId: validatedStepId,
+      type: 'switch',
+      tool: 'switch',
+      output: value,
+      caseValue: value,
+      success: true,
+      timestamp: new Date(),
     };
+  }
 
-    const replaced = expression.replace(/\{\{(.*?)\}\}/g, (_, key) => {
-      const path = key.trim().split(".");
-      let val = context;
-
-      for (const p of path) {
-        val = val?.[p];
-      }
-
-      val = normalize(val);
-
-      if (typeof val === "string") return `"${val}"`;
-      return val;
+  // =========================
+  // MCP
+  // =========================
+  if (stepType === 'mcp') {
+    const execution = await invokeMcpTool({
+      userId: context.userId,
+      serverId: step.serverId,
+      toolName: step.toolName,
+      argumentsInput: step.arguments,
+      context,
+      interpolate,
+      timeoutMs: finalTimeoutMs,
     });
 
-    const cleanedExpression = replaced.replace(/'([^']+)'/g, (_, val) => {
-      return `"${normalize(val)}"`;
-    });
-
-    return Function(`return (${cleanedExpression})`)();
-  } catch (err) {
-    console.error("Condition evaluation failed:", err.message);
-    return false;
+    return {
+      stepId: validatedStepId,
+      type: 'mcp',
+      tool: 'mcp',
+      output: execution.result,
+      success: true,
+      timestamp: new Date(),
+    };
   }
+
+  // =========================
+  // TOOL REGISTRY
+  // =========================
+  if (hasTool(stepType)) {
+    const toolResult = await dispatchTool(stepType, step, context);
+
+    return {
+      stepId: validatedStepId,
+      type: stepType,
+      tool: stepType,
+      output: toolResult,
+      success: true,
+      timestamp: new Date(),
+    };
+  }
+
+  return {
+    stepId: validatedStepId,
+    type: stepType,
+    output: `Unknown step type: ${stepType}`,
+    success: false,
+    timestamp: new Date(),
+  };
 }
 
 module.exports = { executeStep };
