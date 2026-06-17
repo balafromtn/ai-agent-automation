@@ -72,4 +72,16 @@ async function run(step, context, interpolate) {
   return await getTopStories(parsedLimit);
 }
 
-module.exports = { getTopStories, run };
+module.exports = {
+  meta: {
+    id: "hackernews",
+    name: "Hacker News",
+    version: "1.0.0",
+    category: "Web",
+    description: "Fetch top stories from Hacker News.",
+    fields: [
+      { name: "limit", label: "Limit", type: "number", default: 5 }
+    ]
+  },
+  getTopStories, run
+};

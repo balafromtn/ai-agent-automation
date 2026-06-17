@@ -1,174 +1,61 @@
 // src/types/workflow.ts
 
+export interface NodeField {
+  name: string;
+  label: string;
+  type: "text" | "textarea" | "number" | "boolean" | "select";
+  options?: string[];
+  default?: any;
+  required?: boolean;
+}
+
+export interface NodeDefinition {
+  id: string;
+  name: string;
+  version: string;
+  category: string;
+  description: string;
+  fields: NodeField[];
+}
 export type StepType =
-  | "LLM"
-  | "HTTP"
-  | "Delay"
-  | "Tool"
-  | "MCP"
-  | "Document"
-  | "Condition"
-  | "Switch"
-  | "GitHub"
-  | "Slack"
-  | "Discord"
-  | "Parallel"
-  | "Join"
-  | "Approval";
+  | 'LLM'
+  | 'HTTP'
+  | 'Delay'
+  | 'Tool'
+  | 'MCP'
+  | 'Document'
+  | 'Condition'
+  | 'Switch'
+  | 'GitHub'
+  | 'Slack'
+  | 'Discord'
+  | 'Parallel'
+  | 'Join';
 
 export type ToolType = 'email' | 'file' | 'browser';
 
 export interface WorkflowNode {
   id: string;
-  type: StepType;
+  type: string;
   name: string;
   position?: {
     x: number;
     y: number;
   };
-
-  // Parallel Execution
-  failureStrategy?: 'fail-fast' | 'continue-on-error';
-
-  // LLM
-  useMemory?: boolean;
-  memoryTopK?: number;
-  prompt?: string;
-
-  // HTTP
-  url?: string;
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  body?: string;
-
-  // Delay
-  delay?: number;
-
-  // Tool
-  tool?: ToolType;
-
-  // Email
-  to?: string;
-  subject?: string;
-  text?: string;
-  html?: string;
-
-  // File
-  action?: string;
-  path?: string;
-  content?: string;
-
-  // Browser
-  code?: string;
-
-  // MCP
-  serverId?: string;
-  toolName?: string;
-  arguments?: string;
-  timeoutMs?: number;
-
-  // Document RAG
-  documentId?: string;
-  query?: string;
-  topK?: number;
-
-  // Condition
-  conditionType?: 'boolean' | 'sentiment' | 'contains' | string;
-  operator?: string;
-  value?: string;
-  trueTarget?: string;
-  falseTarget?: string;
-
-  // GitHub
-  owner?: string;
-  repo?: string;
-  issue_number?: string;
-  comment?: string;
-  title?: string;
-
-  // Switch
-  cases?: {
-    value: string;
-    target: string;
-  }[];
-  defaultTarget?: string;
-
-  // Approval
-  approvalMessage?: string;
+  config?: Record<string, any>;
+  [key: string]: any;
 }
 
 export interface BackendStep {
   stepId: string;
   name: string;
-  type:
-    | "LLM"
-    | "HTTP"
-    | "Delay"
-    | "Tool"
-    | "llm"
-    | "http"
-    | "delay"
-    | "mcp"
-    | "condition"
-    | "switch"
-    | "document_query"
-    | "file"
-    | "email"
-    | "browser"
-    | "github"
-    | "slack"
-    | "discord"
-    | "parallel"
-    | "join"
-    | "Parallel"
-    | "Join"
-    | "approval";
-
+  type: string;
   position?: {
     x: number;
     y: number;
   };
-
-  failureStrategy?: 'fail-fast' | 'continue-on-error';
-
-  useMemory?: boolean;
-  memoryTopK?: number;
-  prompt?: string;
-  url?: string;
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | string;
-  body?: string;
-  seconds?: number;
-  delay?: number;
-  tool?: string;
-  to?: string;
-  subject?: string;
-  text?: string;
-  html?: string;
-  action?: string;
-  path?: string;
-  content?: string;
-  code?: string;
-  serverId?: string;
-  toolName?: string;
-  arguments?: any;
-  timeoutMs?: number;
-  documentId?: string;
-  query?: string;
-  topK?: number;
-  conditionType?: string;
-  operator?: string;
-  value?: string;
-  trueTarget?: string;
-  falseTarget?: string;
-  owner?: string;
-  repo?: string;
-  issue_number?: string;
-  comment?: string;
-  title?: string;
-  cases?: {
-    value: string;
-    target: string;
-  }[];
-  defaultTarget?: string;
+  config?: Record<string, any>;
+  [key: string]: any;
 }
 
 export interface WorkflowEdge {

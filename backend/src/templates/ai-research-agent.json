@@ -10,6 +10,7 @@
     ],
     "steps": [
         {
+            "stepId": "research",
             "name": "Research Topic",
             "type": "llm",
             "prompt": "Research the topic: {{input.topic}} and produce detailed findings, facts, and key insights.",
@@ -17,11 +18,19 @@
             "memoryTopK": 5
         },
         {
+            "stepId": "summarize",
             "name": "Summarize Findings",
             "type": "llm",
             "prompt": "Using the following research results, produce a clear and concise summary with bullet points:\n\n{{results}}",
             "useMemory": false,
             "memoryTopK": 5
+        }
+    ],
+    "edges": [
+        {
+            "id": "research-to-summarize",
+            "source": "research",
+            "target": "summarize"
         }
     ]
 }

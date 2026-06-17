@@ -1,7 +1,10 @@
-const Workflow = require('../models/workflow.model');
-const Task = require('../models/task.model');
-const workflowVersionService = require('../services/workflowVersion.service');
-const { normalizeWorkflowMetadata, getWorkflowGraph } = require('../utils/workflowMetadata');
+const Workflow = require("../models/workflow.model");
+const Task = require("../models/task.model");
+const workflowVersionService = require("../services/workflowVersion.service");
+const { normalizeWorkflowMetadata, getWorkflowGraph } = require("../utils/workflowMetadata");
+const { migrateWorkflowSteps } = require("../workflow/migrations");
+const { getToolMetadata } = require("../tools/registry");
+const { coreNodes } = require("../workflow/coreNodesRegistry");
 
 const RESERVED_WORDS = [
   'steps',
@@ -79,7 +82,11 @@ async function getWorkflow(req, res) {
     if (!workflow) return res.status(404).json({ error: 'not_found' });
     if (workflow.userId.toString() !== req.user._id.toString())
       return res.status(403).json({ error: 'forbidden' });
-    res.json({ ok: true, workflow });
+    
+    let workflowObj = workflow.toObject();
+    workflowObj = migrateWorkflowSteps(workflowObj);
+
+    res.json({ ok: true, workflow: workflowObj });
   } catch (err) {
     console.error('getWorkflow error', err);
     res.status(500).json({ ok: false, error: 'server_error' });
@@ -286,14 +293,46 @@ async function updateWorkflowSteps(req, res) {
       return res.status(400).json({ ok: false, error: err.message });
     }
 
-    // Clean steps (remove legacy fields)
+    // Persistently normalize steps: move any root-level tool fields into config: {}
+    // This permanently upgrades legacy workflow documents on every save.
+    const BASE_STEP_PROPS = new Set(["stepId", "name", "type", "position", "config", "alias"]);
     steps = steps.map((s) => {
-      const clean = { ...s };
-      delete clean.cases;
-      delete clean.defaultTarget;
-      delete clean.trueTarget;
-      delete clean.falseTarget;
-      return clean;
+      const { cases, defaultTarget, trueTarget, falseTarget, ...rest } = s;
+      const config = { ...(rest.config || {}) };
+
+      // Hoist any root-level non-base fields into config
+      for (const [key, val] of Object.entries(rest)) {
+        if (!BASE_STEP_PROPS.has(key) && val !== undefined && val !== null) {
+          config[key] = val;
+        }
+      }
+
+      // Legacy fallback: if type is 'tool', infer the sub-type
+      let finalType = rest.type;
+      if (String(finalType || '').toLowerCase() === 'tool') {
+        const subTool = config.tool || rest.tool;
+        if (subTool) {
+          finalType = String(subTool).toLowerCase();
+        } else {
+          // Heuristic fallback if subTool was lost
+          if (config.path || (config.action && ['read','write','append','remove','list'].includes(config.action))) {
+            finalType = 'file';
+          } else if (config.to || config.subject) {
+            finalType = 'email';
+          } else if (config.url || config.action === 'evaluate') {
+            finalType = 'browser';
+          }
+        }
+      }
+
+      return {
+        stepId: rest.stepId,
+        name: rest.name,
+        type: finalType,
+        position: rest.position,
+        ...(rest.alias ? { alias: rest.alias } : {}),
+        config,
+      };
     });
 
     // Validate edges
@@ -403,6 +442,17 @@ async function cloneWorkflow(req, res) {
   }
 }
 
+async function getNodeDefinitions(req, res) {
+  try {
+    const tools = getToolMetadata();
+    const allNodes = [...coreNodes, ...tools];
+    res.json({ ok: true, nodeDefinitions: allNodes });
+  } catch (err) {
+    console.error("getNodeDefinitions error", err);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+}
+
 module.exports = {
   createWorkflow,
   listWorkflows,
@@ -415,4 +465,5 @@ module.exports = {
   updateWorkflowSteps,
   exportWorkflow,
   cloneWorkflow,
+  getNodeDefinitions
 };

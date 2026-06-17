@@ -94,4 +94,18 @@ async function run(step, context, interpolate) {
   }
 }
 
-module.exports = { write, append, read, remove, list, BASE_DIR, run };
+module.exports = {
+  meta: {
+    id: "file",
+    name: "File System",
+    version: "1.0.0",
+    category: "Core",
+    description: "Read, write, append, or remove files in the workspace.",
+    fields: [
+      { name: "action", label: "Action", type: "select", options: ["read", "write", "append", "remove", "list"], default: "read", required: true },
+      { name: "path", label: "File Path", type: "text", required: true },
+      { name: "content", label: "File Content (for write/append)", type: "textarea" }
+    ]
+  },
+  write, append, read, remove, list, BASE_DIR, run
+};

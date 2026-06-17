@@ -7,6 +7,7 @@
   "tags": ["ai", "file", "automation"],
   "steps": [
     {
+      "stepId": "generate",
       "name": "Generate Content",
       "type": "llm",
       "prompt": "Write detailed content about: {{input.topic}}",
@@ -14,11 +15,19 @@
       "memoryTopK": 5
     },
     {
+      "stepId": "save",
       "name": "Save Content To File",
       "type": "file",
       "action": "write",
-      "path": "",
+      "path": "runtime/content.txt",
       "content": "{{last.output}}"
+    }
+  ],
+  "edges": [
+    {
+      "id": "generate-to-save",
+      "source": "generate",
+      "target": "save"
     }
   ]
 }

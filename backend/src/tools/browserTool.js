@@ -94,4 +94,18 @@ async function run(step, context, interpolate) {
   }
 }
 
-module.exports = { screenshot, evaluate, run };
+module.exports = {
+  meta: {
+    id: "browser",
+    name: "Browser Automation",
+    version: "1.0.0",
+    category: "Web",
+    description: "Control a headless browser to take screenshots or evaluate JavaScript.",
+    fields: [
+      { name: "action", label: "Action", type: "select", options: ["screenshot", "evaluate"], default: "screenshot", required: true },
+      { name: "url", label: "URL", type: "text", required: true },
+      { name: "code", label: "JavaScript Code (for evaluate)", type: "textarea" }
+    ]
+  },
+  screenshot, evaluate, run
+};

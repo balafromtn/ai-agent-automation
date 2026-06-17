@@ -1,9 +1,10 @@
 import { generateNodeId, generateEdgeId } from './ids';
-import type { WorkflowNode, WorkflowEdge, ValidationResult } from '../types/workflow';
+import type { WorkflowNode, WorkflowEdge, ValidationResult, NodeDefinition } from '../types/workflow';
 
 /**
  * Normalizes any step type variation (uppercase, lowercase, mixed-case, tool aliases)
- * to a canonical StepType.
+ * to a canonical StepType. For unknown types, returns them as-is so new tools
+ * discovered from nodeDefinitions are never incorrectly mapped.
  */
 export const normalizeStepType = (type?: string): string => {
   if (!type) return 'LLM';
@@ -24,23 +25,13 @@ export const normalizeStepType = (type?: string): string => {
     case 'document':
     case 'document_query':
       return 'Document';
-    case 'tool':
-    case 'file':
-    case 'email':
-    case 'browser':
-      return 'Tool';
-    case 'github':
-      return 'GitHub';
-    case 'slack':
-      return 'Slack';
-    case 'discord':
-      return 'Discord';
     case 'parallel':
       return 'Parallel';
     case 'join':
       return 'Join';
     default:
-      return type.charAt(0).toUpperCase() + type.slice(1);
+      // Return type as-is for dynamically discovered nodes (tool plugins, etc.)
+      return type;
   }
 };
 
@@ -119,10 +110,83 @@ export const sanitizeImportedGraph = (
 };
 
 /**
+ * Validates structural graph constraints for branching nodes (Condition, Switch, Parallel, Join).
+ * These checks are always applied regardless of schema-driven vs legacy path.
+ */
+function runStructuralChecks(
+  node: WorkflowNode,
+  edges: WorkflowEdge[],
+  stepName: string,
+  lowerType: string,
+  errors: string[],
+  invalidNodes: Set<string>
+) {
+  if (lowerType === 'condition') {
+    const outEdges = (edges || []).filter((e) => e.source === node.id);
+    const hasTrue = outEdges.some(
+      (e) => e.condition === 'true' || e.label?.toLowerCase() === 'true'
+    );
+    const hasFalse = outEdges.some(
+      (e) => e.condition === 'false' || e.label?.toLowerCase() === 'false'
+    );
+    if (!hasTrue || !hasFalse) {
+      errors.push(
+        `Step Validation: Condition step '${stepName}' is missing a 'true' or 'false' branch connection.`
+      );
+      invalidNodes.add(node.id);
+    }
+  }
+
+  if (lowerType === 'switch') {
+    const outEdges = (edges || []).filter((e) => e.source === node.id);
+    if (outEdges.length === 0) {
+      errors.push(`Step Validation: Switch step '${stepName}' has no connected case branches.`);
+      invalidNodes.add(node.id);
+    }
+    outEdges.forEach((e) => {
+      if (!e.caseValue && !e.label) {
+        errors.push(
+          `Step Validation: Switch step '${stepName}' has an outgoing connection without a case value.`
+        );
+        invalidNodes.add(node.id);
+      }
+    });
+  }
+
+  if (lowerType === 'parallel') {
+    const outEdges = (edges || []).filter((e) => e.source === node.id);
+    if (outEdges.length < 2) {
+      errors.push(
+        `Step Validation: Parallel step '${stepName}' requires at least two outgoing branches.`
+      );
+      invalidNodes.add(node.id);
+    }
+  }
+
+  if (lowerType === 'join') {
+    const inEdges = (edges || []).filter((e) => e.target === node.id);
+    if (inEdges.length < 2) {
+      errors.push(
+        `Step Validation: Join step '${stepName}' requires at least two incoming branches to merge.`
+      );
+      invalidNodes.add(node.id);
+    }
+  }
+}
+
+/**
  * Structural & Step Validation Layer
  * Inspects the workflow graph for unreachable nodes, missing fields, and invalid branches.
+ *
+ * When nodeDefinitions is provided, required field validation is entirely schema-driven:
+ * any field with required:true in its definition will be checked on all matching nodes.
+ * Falls back to built-in LLM prompt check for core types if no definitions provided.
  */
-export const validateGraph = (nodes: WorkflowNode[], edges: WorkflowEdge[]): ValidationResult => {
+export const validateGraph = (
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[],
+  nodeDefinitions?: NodeDefinition[]
+): ValidationResult => {
   const errors: string[] = [];
   const nodeIds = new Set<string>();
   const invalidNodes = new Set<string>();
@@ -212,94 +276,45 @@ export const validateGraph = (nodes: WorkflowNode[], edges: WorkflowEdge[]): Val
     });
   }
 
+  // ─── Step-level field validation ──────────────────────────────────────────────
   (nodes || []).forEach((node) => {
     const stepName = node.name || node.type;
-    const normalizedType = normalizeStepType(node.type);
+    const lowerType = (node.type || '').toLowerCase();
 
+    // ── Schema-driven validation (uses nodeDefinitions when available) ──
+    if (nodeDefinitions && nodeDefinitions.length > 0) {
+      const def = nodeDefinitions.find((d) => d.id.toLowerCase() === lowerType);
+      if (def) {
+        for (const field of def.fields) {
+          if (field.required) {
+            const val = node.config?.[field.name] ?? node[field.name];
+            if (val === undefined || val === null || String(val).trim() === '') {
+              errors.push(
+                `Step Validation: '${stepName}' is missing required field "${field.label}".`
+              );
+              invalidNodes.add(node.id);
+            }
+          }
+        }
+        // Schema-driven path: only run structural checks (branching nodes)
+        runStructuralChecks(node, edges, stepName, lowerType, errors, invalidNodes);
+        return;
+      }
+    }
+
+    // ── Legacy fallback: LLM prompt check (when nodeDefinitions not loaded yet) ──
+    const normalizedType = normalizeStepType(node.type);
     if (normalizedType === 'LLM') {
-      if (!node.prompt || node.prompt.trim() === '') {
+      if (
+        !(node.config?.prompt || node.prompt) ||
+        (node.config?.prompt || node.prompt).trim() === ''
+      ) {
         errors.push(`Step Validation: LLM step '${stepName}' is missing a required prompt.`);
         invalidNodes.add(node.id);
       }
     }
 
-    if (normalizedType === 'Tool') {
-      const toolVal =
-        node.tool ||
-        (['file', 'email', 'browser'].includes(node.type?.toLowerCase())
-          ? node.type.toLowerCase()
-          : undefined);
-      if (!toolVal) {
-        errors.push(`Step Validation: Tool step '${stepName}' has no tool type selected.`);
-        invalidNodes.add(node.id);
-      } else {
-        if (toolVal === 'email' && (!node.to || node.to.trim() === '')) {
-          errors.push(`Step Validation: Email tool '${stepName}' is missing a recipient address.`);
-          invalidNodes.add(node.id);
-        }
-        if (toolVal === 'file' && (!node.path || node.path.trim() === '')) {
-          errors.push(`Step Validation: File tool '${stepName}' is missing a file path.`);
-          invalidNodes.add(node.id);
-        }
-        if (
-          toolVal === 'browser' &&
-          node.action !== 'evaluate' &&
-          (!node.url || node.url.trim() === '')
-        ) {
-          errors.push(`Step Validation: Browser tool '${stepName}' is missing a target URL.`);
-          invalidNodes.add(node.id);
-        }
-      }
-    }
-
-    if (normalizedType === 'Condition') {
-      const outEdges = (edges || []).filter((e) => e.source === node.id);
-      const hasTrue = outEdges.some(
-        (e) => e.condition === 'true' || e.label?.toLowerCase() === 'true'
-      );
-      const hasFalse = outEdges.some(
-        (e) => e.condition === 'false' || e.label?.toLowerCase() === 'false'
-      );
-
-      if (!hasTrue || !hasFalse) {
-        errors.push(
-          `Step Validation: Condition step '${stepName}' is missing a 'true' or 'false' branch connection.`
-        );
-        invalidNodes.add(node.id);
-      }
-    }
-
-    if (normalizedType === 'Switch') {
-      const outEdges = (edges || []).filter((e) => e.source === node.id);
-      if (outEdges.length === 0) {
-        errors.push(`Step Validation: Switch step '${stepName}' has no connected case branches.`);
-        invalidNodes.add(node.id);
-      }
-      outEdges.forEach((e) => {
-        if (!e.caseValue && !e.label) {
-          errors.push(
-            `Step Validation: Switch step '${stepName}' has an outgoing connection without a case value.`
-          );
-          invalidNodes.add(node.id);
-        }
-      });
-    }
-
-    if (normalizedType === 'Parallel') {
-      const outEdges = (edges || []).filter((e) => e.source === node.id);
-      if (outEdges.length < 2) {
-        errors.push(`Step Validation: Parallel step '${stepName}' requires at least two outgoing branches.`);
-        invalidNodes.add(node.id);
-      }
-    }
-
-    if (normalizedType === 'Join') {
-      const inEdges = (edges || []).filter((e) => e.target === node.id);
-      if (inEdges.length < 2) {
-        errors.push(`Step Validation: Join step '${stepName}' requires at least two incoming branches to merge.`);
-        invalidNodes.add(node.id);
-      }
-    }
+    runStructuralChecks(node, edges, stepName, lowerType, errors, invalidNodes);
   });
 
   return {

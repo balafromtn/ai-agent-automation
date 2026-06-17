@@ -13,7 +13,8 @@ const {
   runWorkflowNow,
   updateWorkflowSteps,
   exportWorkflow,
-  cloneWorkflow
+  cloneWorkflow,
+  getNodeDefinitions
 } = require("../controllers/workflow.controller");
 
 const {
@@ -29,6 +30,7 @@ router.post("/", createWorkflow);
 router.get("/", listWorkflows);
 
 // IMPORTANT: specific routes FIRST
+router.get("/node-definitions", getNodeDefinitions);
 router.get("/:workflowId/export", exportWorkflow);
 router.put("/:workflowId/steps", updateWorkflowSteps);
 router.post("/:workflowId/add-task", addTaskToWorkflow);

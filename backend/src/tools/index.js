@@ -6,6 +6,7 @@ const hackerNewsTool = require("./hackerNewsTool");
 const githubTool = require("./githubTool");
 const slackTool = require("./slackTool");
 const discordTool = require("./discordTool");
+const test_tool = require("./test_tool");
 
 module.exports = {
   emailTool,
@@ -15,4 +16,5 @@ module.exports = {
   githubTool,
   slackTool,
   discordTool,
+  test_tool,
 };

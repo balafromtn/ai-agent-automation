@@ -57,4 +57,19 @@ async function run(step, context, interpolate) {
   return await sendMail(payloadOptions);
 }
 
-module.exports = { sendMail, run };
+module.exports = {
+  meta: {
+    id: "email",
+    name: "Email",
+    version: "1.0.0",
+    category: "Communication",
+    description: "Send emails via SMTP.",
+    fields: [
+      { name: "to", label: "To", type: "text", required: true },
+      { name: "subject", label: "Subject", type: "text", required: true },
+      { name: "text", label: "Plain Text Body", type: "textarea" },
+      { name: "html", label: "HTML Body", type: "textarea" }
+    ]
+  },
+  sendMail, run
+};

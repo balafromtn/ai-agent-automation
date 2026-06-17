@@ -1,20 +1,42 @@
 // backend/src/tools/registry.js
 const { fork } = require("child_process");
 const path = require("path");
+const fs = require("fs");
 
-const toolRegistryMap = {
-  email: "emailTool",
-  file: "fileTool",
-  browser: "browserTool",
-  hackernews: "hackerNewsTool",
-  github: "githubTool",
-  slack: "slackTool",
-  discord: "discordTool"
-};
+const toolRegistryMap = {};
+const toolMetadata = [];
+
+function loadTools() {
+  const files = fs.readdirSync(__dirname);
+  for (const file of files) {
+    if (file.endsWith(".js") && file !== "index.js" && file !== "registry.js" && file !== "sandboxWorker.js" && file !== "testSandbox.js") {
+      try {
+        const toolMod = require(path.join(__dirname, file));
+        if (toolMod && toolMod.meta && toolMod.meta.id) {
+          const id = toolMod.meta.id.toLowerCase();
+          const toolName = file.replace(".js", "");
+          toolRegistryMap[id] = toolName;
+          toolMetadata.push(toolMod.meta);
+        } else {
+          console.warn(`[ToolRegistry] Skipping ${file}: missing or invalid meta schema`);
+        }
+      } catch (err) {
+        console.error(`[ToolRegistry] Failed to load ${file}:`, err.message);
+      }
+    }
+  }
+}
+
+// Initialize tools on startup
+loadTools();
 
 function hasTool(type) {
   if (!type) return false;
   return !!toolRegistryMap[type.toLowerCase()];
+}
+
+function getToolMetadata() {
+  return toolMetadata;
 }
 
 async function dispatchTool(type, step, context) {
@@ -112,5 +134,6 @@ function runToolInSandbox(toolName, functionName, args = []) {
 module.exports = { 
   runToolInSandbox,
   hasTool,
-  dispatchTool
+  dispatchTool,
+  getToolMetadata
 };
